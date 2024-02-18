@@ -24,7 +24,8 @@ struct Rect {
 
 #[derive(Default)]
 struct Monitor {
-    mater_index: u32,
+    name: [u16; 32],
+    master_index: u32,
     index: u32,
     bar_y: i32,
     size: Rect,
@@ -58,10 +59,25 @@ unsafe extern "system" fn enum_monitor(hmonitor: HMONITOR, _: HDC, rect: *mut RE
         return TRUE;
     }
 
-    //unsigned shot to srt
-    let monitor_name = String::from_utf16_lossy(&monitor_info.szDevice);
+    //unsigned shot to str
+    let monitor_name = PCWSTR::from_raw(monitor_info.szDevice.as_ptr());
 
-    let mut monitor = Monitor::default();
+    let mut monitor = Monitor{
+        name: monitor_info.szDevice,
+        size: Rect {
+            x: monitor_info.monitorInfo.rcMonitor.left,
+            y: monitor_info.monitorInfo.rcMonitor.top,
+            width: monitor_info.monitorInfo.rcMonitor.right - monitor_info.monitorInfo.rcMonitor.left,
+            height: monitor_info.monitorInfo.rcMonitor.bottom - monitor_info.monitorInfo.rcMonitor.top
+        },
+        window_area: Rect {
+            x: monitor_info.monitorInfo.rcWork.left,
+            y: monitor_info.monitorInfo.rcWork.top,
+            width: monitor_info.monitorInfo.rcWork.right - monitor_info.monitorInfo.rcWork.left,
+            height: monitor_info.monitorInfo.rcWork.bottom - monitor_info.monitorInfo.rcWork.top
+        },
+        ..Default::default()
+    };
     // monitor.index = DWMR_APP.monitors.read().unwrap().len() as u32;
     // DWMR_APP.monitors.write().unwrap().push(monitor);
     TRUE
