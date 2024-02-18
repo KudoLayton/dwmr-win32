@@ -167,7 +167,7 @@ unsafe fn is_cloaked(hwnd: &HWND) -> Result<bool> {
     Ok(is_cloaked)
 }
 
-unsafe fn is_manageable(hwnd: &HWND) -> Result<bool>
+pub unsafe fn is_manageable(hwnd: &HWND) -> Result<bool>
 {
     let style = GetWindowLongW(*hwnd, GWL_STYLE) as u32;
     if has_flag!(style, WS_DISABLED.0) {
@@ -175,9 +175,14 @@ unsafe fn is_manageable(hwnd: &HWND) -> Result<bool>
     }
 
     let exstyle = GetWindowLongW(*hwnd, GWL_EXSTYLE) as u32;
+    if has_flag!(exstyle, WS_EX_NOACTIVATE.0) {
+        return Ok(false);
+    }
 
-    let is_noactivate = has_flag!(exstyle, WS_EX_NOACTIVATE.0);
-    if is_noactivate {
+    SetLastError(WIN32_ERROR(0));
+    let name_length = GetWindowTextLengthW(*hwnd);
+    if name_length == 0 {
+        GetLastError()?;
         return Ok(false);
     }
 
@@ -186,6 +191,7 @@ unsafe fn is_manageable(hwnd: &HWND) -> Result<bool>
     }
 
     let mut client_name_buf = [0u16; 256];
+    SetLastError(WIN32_ERROR(0));
     if GetWindowTextW(*hwnd, client_name_buf.as_mut()) == 0 {
         GetLastError()?;
     }
@@ -195,6 +201,7 @@ unsafe fn is_manageable(hwnd: &HWND) -> Result<bool>
     }
 
     let mut class_name_buf = [0u16; 256];
+    SetLastError(WIN32_ERROR(0));
     if GetClassNameW(*hwnd, class_name_buf.as_mut()) == 0 {
         GetLastError()?;
     }
@@ -206,9 +213,14 @@ unsafe fn is_manageable(hwnd: &HWND) -> Result<bool>
     let parent = GetParent(*hwnd);
     let parent_exist = parent.0 != 0;
     let is_tool = has_flag!(exstyle, WS_EX_TOOLWINDOW.0);
-    if !parent_exist && !is_tool {
-        let result = IsWindowVisible(*hwnd) == TRUE;
-        return Ok(result);
+
+    if !parent_exist {
+        if is_tool {
+            return Ok(false);
+        } else {
+            let result = IsWindowVisible(*hwnd) == TRUE;
+            return Ok(result);
+        }
     }
 
     if is_manageable(&parent)? == false {
