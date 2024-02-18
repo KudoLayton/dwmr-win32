@@ -103,7 +103,8 @@ lazy_static! {
         "Cortana".to_string(),
         "Start".to_string(),
         "Windows Default Lock Screen".to_string(),
-        "Search".to_string()
+        "Search".to_string(),
+        "WinUI Desktop".to_string()
     ]);
 
     static ref DISALLOWED_CLASS: HashSet<String> = HashSet::from([
@@ -236,7 +237,10 @@ pub unsafe fn is_manageable(hwnd: &HWND) -> Result<bool>
 }
 
 unsafe extern "system" fn scan(hwnd: HWND, _: LPARAM) -> BOOL {
-    is_manageable(&hwnd).unwrap();
+    if !is_manageable(&hwnd).unwrap() {
+        return TRUE;
+    }
+
     TRUE
 }
 
