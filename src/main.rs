@@ -4,6 +4,7 @@ use windows::{
         Foundation::*,
         System::LibraryLoader::*,
         UI::WindowsAndMessaging::*,
+        Graphics::Gdi::*
     }
 };
 use std::sync::*;
@@ -14,17 +15,72 @@ const W_APP_NAME: PCWSTR = w!("dwmr-win32");
 const S_APP_NAME: PCSTR = s!("dwmr-win32");
 
 #[derive(Default)]
+struct Rect {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+}
+
+#[derive(Default)]
+struct Monitor {
+    mater_index: u32,
+    index: u32,
+    bar_y: i32,
+    size: Rect,
+    window_area: Rect,
+}
+
+#[derive(Default)]
 struct DwmrApp {
     hwnd: RwLock<Option<HWND>>,
+    monitors: RwLock<Vec<Monitor>>
 }
 
 lazy_static! {
-    static ref DWMR_APP: Arc<DwmrApp> = Arc::new(DwmrApp::default());
+    static ref DWMR_APP: DwmrApp = DwmrApp::default();
 }
 
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
 {
     LRESULT::default()
+}
+
+unsafe extern "system" fn enum_monitor(hmonitor: HMONITOR, _: HDC, rect: *mut RECT, _: LPARAM) -> BOOL {
+    let mut monitor_info = MONITORINFOEXW{
+        monitorInfo: MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFOEXW>() as u32,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    if GetMonitorInfoW(hmonitor, &mut monitor_info.monitorInfo) == FALSE {
+        return TRUE;
+    }
+
+    //unsigned shot to srt
+    let monitor_name = String::from_utf16_lossy(&monitor_info.szDevice);
+
+    let mut monitor = Monitor::default();
+    // monitor.index = DWMR_APP.monitors.read().unwrap().len() as u32;
+    // DWMR_APP.monitors.write().unwrap().push(monitor);
+    TRUE
+}
+
+unsafe fn request_update_geom() -> Result<()> {
+    let mut wa: RECT = RECT::default();
+
+    SystemParametersInfoW(
+        SPI_GETWORKAREA,
+        0,
+        Some(&mut wa as *mut _ as *mut _),
+        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS{0:0}
+    )?;
+
+    if EnumDisplayMonitors(None, None, Some(enum_monitor), None) == FALSE {
+        return Ok(());
+    }
+    Ok(())
 }
 
 unsafe fn setup(hinstance: &HINSTANCE) -> Result<()> {
@@ -34,6 +90,8 @@ unsafe fn setup(hinstance: &HINSTANCE) -> Result<()> {
         lpszClassName: W_APP_NAME,
         ..Default::default()
     };
+
+    request_update_geom()?;
 
     if RegisterClassW(&wnd_class) == 0{
         GetLastError()?;
@@ -64,11 +122,11 @@ unsafe fn setup(hinstance: &HINSTANCE) -> Result<()> {
 }
 
 unsafe fn cleanup(hinstance: &HINSTANCE) -> Result<()> {
-    let mut hwnd = DWMR_APP.hwnd.write().unwrap();
-    DestroyWindow((*hwnd).unwrap())?;
-    *hwnd = None;
+    //let mut hwnd = DWMR_APP.hwnd.write().unwrap();
+    //DestroyWindow((*hwnd).unwrap())?;
+    //*hwnd = None;
 
-    UnregisterClassW(W_APP_NAME, *hinstance)?;
+    //UnregisterClassW(W_APP_NAME, *hinstance)?;
 
     Ok(())
 }
