@@ -14,6 +14,8 @@ extern  crate lazy_static;
 const W_APP_NAME: PCWSTR = w!("dwmr-win32");
 const S_APP_NAME: PCSTR = s!("dwmr-win32");
 
+const BAR_HEIGHT: i32 = 20;
+
 #[derive(Default)]
 struct Rect {
     x: i32,
@@ -22,8 +24,20 @@ struct Rect {
     height: i32,
 }
 
+impl Rect {
+    fn from_win_rect(rect: &RECT) -> Rect {
+        Rect {
+            x: rect.left,
+            y: rect.top,
+            width: rect.right - rect.left,
+            height: rect.bottom - rect.top
+        }
+    }
+}
+
 #[derive(Default)]
 struct Monitor {
+    //LPCWSTR type
     name: [u16; 32],
     master_index: u32,
     index: u32,
@@ -60,38 +74,24 @@ unsafe extern "system" fn enum_monitor(hmonitor: HMONITOR, _: HDC, rect: *mut RE
     }
 
     //unsigned shot to str
-    let monitor_name = PCWSTR::from_raw(monitor_info.szDevice.as_ptr());
+    let _monitor_name = PCWSTR::from_raw(monitor_info.szDevice.as_ptr()).to_string().unwrap();
 
-    let mut monitor = Monitor{
+    let monitor = Monitor{
         name: monitor_info.szDevice,
-        size: Rect {
-            x: monitor_info.monitorInfo.rcMonitor.left,
-            y: monitor_info.monitorInfo.rcMonitor.top,
-            width: monitor_info.monitorInfo.rcMonitor.right - monitor_info.monitorInfo.rcMonitor.left,
-            height: monitor_info.monitorInfo.rcMonitor.bottom - monitor_info.monitorInfo.rcMonitor.top
-        },
-        window_area: Rect {
-            x: monitor_info.monitorInfo.rcWork.left,
-            y: monitor_info.monitorInfo.rcWork.top,
-            width: monitor_info.monitorInfo.rcWork.right - monitor_info.monitorInfo.rcWork.left,
-            height: monitor_info.monitorInfo.rcWork.bottom - monitor_info.monitorInfo.rcWork.top
-        },
+        index: DWMR_APP.monitors.read().unwrap().len() as u32,
+        size: Rect::from_win_rect(&monitor_info.monitorInfo.rcMonitor),
+        window_area: Rect::from_win_rect(&monitor_info.monitorInfo.rcWork),
         ..Default::default()
     };
-    // monitor.index = DWMR_APP.monitors.read().unwrap().len() as u32;
-    // DWMR_APP.monitors.write().unwrap().push(monitor);
+
+    DWMR_APP.monitors.write().unwrap().push(monitor);
     TRUE
 }
 
 unsafe fn request_update_geom() -> Result<()> {
-    let mut wa: RECT = RECT::default();
+    let monitors = GetSystemMetrics(SM_CMONITORS) as usize;
+    DWMR_APP.monitors.write().unwrap().reserve(monitors);
 
-    SystemParametersInfoW(
-        SPI_GETWORKAREA,
-        0,
-        Some(&mut wa as *mut _ as *mut _),
-        SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS{0:0}
-    )?;
 
     if EnumDisplayMonitors(None, None, Some(enum_monitor), None) == FALSE {
         return Ok(());
