@@ -4,10 +4,27 @@ use windows::{
         Foundation::*,
         System::LibraryLoader::*,
         UI::WindowsAndMessaging::*,
-        Graphics::Gdi::*
+        Graphics::{
+            Dwm::*,
+            Gdi::*
+        }
     }
 };
-use std::sync::*;
+use std::{
+    sync::*, 
+    collections::*,
+    mem::size_of
+};
+
+mod test;
+
+// a macro to check bit flags for u32
+macro_rules! has_flag {
+    ($flags:expr, $flag:expr) => {
+        $flags & $flag == $flag
+    };
+}
+
 #[macro_use]
 extern  crate lazy_static;
 
@@ -15,6 +32,7 @@ const W_APP_NAME: PCWSTR = w!("dwmr-win32");
 const S_APP_NAME: PCSTR = s!("dwmr-win32");
 
 const BAR_HEIGHT: i32 = 20;
+
 
 #[derive(Default)]
 struct Rect {
@@ -42,18 +60,60 @@ struct Monitor {
     master_index: u32,
     index: u32,
     bar_y: i32,
-    size: Rect,
-    window_area: Rect,
+    rect: Rect,
+    client_area: Rect,
+}
+
+#[derive(Default)]
+struct Client {
+    hwnd: HWND,
+    parent: HWND,
+    root: HWND,
+    rect: Rect,
+    bw: i32,
+    tags: u32,
+    is_minimized: bool,
+    is_floating: bool,
+    is_ignored: bool,
+    ignore_borders: bool,
+    border: bool,
+    was_visible: bool,
+    is_fixed: bool,
+    is_urgent: bool,
+    is_cloaked: bool,
 }
 
 #[derive(Default)]
 struct DwmrApp {
     hwnd: RwLock<Option<HWND>>,
-    monitors: RwLock<Vec<Monitor>>
+    monitors: RwLock<Vec<Monitor>>,
+    clients: RwLock<LinkedList<Client>>,
 }
 
 lazy_static! {
     static ref DWMR_APP: DwmrApp = DwmrApp::default();
+    static ref DISALLOWED_TITLE: HashSet<String> = HashSet::from([
+        "Windows Shell Experience Host".to_string(),
+        "Microsoft Text Input Application".to_string(),
+        "Action center".to_string(),
+        "New Notification".to_string(),
+        "Date and Time Information".to_string(),
+        "Volume Control".to_string(),
+        "Network Connections".to_string(),
+        "Cortana".to_string(),
+        "Start".to_string(),
+        "Windows Default Lock Screen".to_string(),
+        "Search".to_string()
+    ]);
+
+    static ref DISALLOWED_CLASS: HashSet<String> = HashSet::from([
+        "Windows.UI.Core.CoreWindow".to_string(),
+        "ForegroundStaging".to_string(),
+        "ApplicationManager_DesktopShellWindow".to_string(),
+        "Static".to_string(),
+        "Scrollbar".to_string(),
+        "Progman".to_string(),
+    ]);
 }
 
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
@@ -61,7 +121,7 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
     LRESULT::default()
 }
 
-unsafe extern "system" fn enum_monitor(hmonitor: HMONITOR, _: HDC, rect: *mut RECT, _: LPARAM) -> BOOL {
+unsafe extern "system" fn update_geom(hmonitor: HMONITOR, _: HDC, rect: *mut RECT, _: LPARAM) -> BOOL {
     let mut monitor_info = MONITORINFOEXW{
         monitorInfo: MONITORINFO {
             cbSize: std::mem::size_of::<MONITORINFOEXW>() as u32,
@@ -79,8 +139,8 @@ unsafe extern "system" fn enum_monitor(hmonitor: HMONITOR, _: HDC, rect: *mut RE
     let monitor = Monitor{
         name: monitor_info.szDevice,
         index: DWMR_APP.monitors.read().unwrap().len() as u32,
-        size: Rect::from_win_rect(&monitor_info.monitorInfo.rcMonitor),
-        window_area: Rect::from_win_rect(&monitor_info.monitorInfo.rcWork),
+        rect: Rect::from_win_rect(&monitor_info.monitorInfo.rcMonitor),
+        client_area: Rect::from_win_rect(&monitor_info.monitorInfo.rcWork),
         ..Default::default()
     };
 
@@ -93,10 +153,79 @@ unsafe fn request_update_geom() -> Result<()> {
     DWMR_APP.monitors.write().unwrap().reserve(monitors);
 
 
-    if EnumDisplayMonitors(None, None, Some(enum_monitor), None) == FALSE {
+    if EnumDisplayMonitors(None, None, Some(update_geom), None) == FALSE {
         return Ok(());
     }
     Ok(())
+}
+
+unsafe fn is_cloaked(hwnd: &HWND) -> Result<bool> {
+    let mut cloaked_val = 0;
+    DwmGetWindowAttribute(*hwnd, DWMWA_CLOAKED, (&mut cloaked_val) as *const _ as *mut _, size_of::<u32>() as u32)?;
+    let is_cloaked = cloaked_val > 0;
+
+    Ok(is_cloaked)
+}
+
+unsafe fn is_manageable(hwnd: &HWND) -> Result<bool>
+{
+    let style = GetWindowLongW(*hwnd, GWL_STYLE) as u32;
+    if has_flag!(style, WS_DISABLED.0) {
+        return Ok(false);
+    }
+
+    let exstyle = GetWindowLongW(*hwnd, GWL_EXSTYLE) as u32;
+
+    let is_noactivate = has_flag!(exstyle, WS_EX_NOACTIVATE.0);
+    if is_noactivate {
+        return Ok(false);
+    }
+
+    if is_cloaked(hwnd)? {
+        return Ok(false);
+    }
+
+    let mut client_name_buf = [0u16; 256];
+    if GetWindowTextW(*hwnd, client_name_buf.as_mut()) == 0 {
+        GetLastError()?;
+    }
+    let client_name = PCWSTR::from_raw(client_name_buf.as_ptr()).to_string().unwrap();
+    if DISALLOWED_TITLE.contains(&client_name) {
+        return Ok(false);
+    }
+
+    let mut class_name_buf = [0u16; 256];
+    if GetClassNameW(*hwnd, class_name_buf.as_mut()) == 0 {
+        GetLastError()?;
+    }
+    let class_name = PCWSTR::from_raw(class_name_buf.as_ptr()).to_string().unwrap();
+    if DISALLOWED_CLASS.contains(&class_name) {
+        return Ok(false);
+    }
+
+    let parent = GetParent(*hwnd);
+    let parent_exist = parent.0 != 0;
+    let is_tool = has_flag!(exstyle, WS_EX_TOOLWINDOW.0);
+    if !parent_exist && !is_tool {
+        let result = IsWindowVisible(*hwnd) == TRUE;
+        return Ok(result);
+    }
+
+    if is_manageable(&parent)? == false {
+        return Ok(false);
+    }
+
+    let is_app = has_flag!(exstyle, WS_EX_APPWINDOW.0);
+    if is_tool || is_app {
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+unsafe extern "system" fn scan(hwnd: HWND, _: LPARAM) -> BOOL {
+    is_manageable(&hwnd).unwrap();
+    TRUE
 }
 
 unsafe fn setup(hinstance: &HINSTANCE) -> Result<()> {
@@ -108,6 +237,8 @@ unsafe fn setup(hinstance: &HINSTANCE) -> Result<()> {
     };
 
     request_update_geom()?;
+
+    EnumWindows(Some(scan), None)?;
 
     if RegisterClassW(&wnd_class) == 0{
         GetLastError()?;
