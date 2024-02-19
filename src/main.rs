@@ -236,8 +236,47 @@ pub unsafe fn is_manageable(hwnd: &HWND) -> Result<bool>
     Ok(false)
 }
 
+unsafe fn get_root(hwnd: &HWND) -> Result<HWND> {
+    let desktop_window = GetDesktopWindow();
+    let mut current = hwnd.clone();
+    let mut parent = GetWindow(current, GW_OWNER);
+
+    while (parent.0 != 0) && (parent != desktop_window) {
+        current = parent;
+        parent = GetWindow(current, GW_OWNER);
+    }
+
+    Ok(current)
+}
+
+unsafe fn manage(hwnd: &HWND) -> Result<Client> {
+    let mut window_info = WINDOWINFO {
+        cbSize: size_of::<WINDOWINFO>() as u32,
+        ..Default::default()
+    };
+
+    GetWindowInfo(*hwnd, &mut window_info)?;
+
+    let parent = GetParent(*hwnd);
+    let root = get_root(hwnd)?;
+    let is_cloaked = is_cloaked(hwnd)?;
+    let is_minimized = IsIconic(*hwnd) == TRUE;
+    let client = Client {
+        hwnd: *hwnd,
+        parent,
+        root,
+        rect: Rect::from_win_rect(&window_info.rcWindow),
+        bw: 0,
+        is_minimized,
+        is_cloaked,
+        ..Default::default()
+    };
+    Ok(client)
+}
+
 unsafe extern "system" fn scan(hwnd: HWND, _: LPARAM) -> BOOL {
     if !is_manageable(&hwnd).unwrap() {
+        manage(&hwnd);
         return TRUE;
     }
 
