@@ -249,7 +249,7 @@ unsafe fn get_root(hwnd: &HWND) -> Result<HWND> {
     Ok(current)
 }
 
-unsafe fn manage(hwnd: &HWND) -> Result<Client> {
+unsafe fn create_client(hwnd: &HWND) -> Result<Client> {
     let mut window_info = WINDOWINFO {
         cbSize: size_of::<WINDOWINFO>() as u32,
         ..Default::default()
@@ -276,9 +276,11 @@ unsafe fn manage(hwnd: &HWND) -> Result<Client> {
 
 unsafe extern "system" fn scan(hwnd: HWND, _: LPARAM) -> BOOL {
     if !is_manageable(&hwnd).unwrap() {
-        manage(&hwnd);
         return TRUE;
     }
+
+    let new_client = create_client(&hwnd).unwrap();
+    DWMR_APP.clients.write().unwrap().push_back(new_client);
 
     TRUE
 }
