@@ -409,50 +409,44 @@ unsafe fn tile(monitor: &Monitor) -> Result<()> {
         if !is_tiled(client) {
             continue;
         }
-        if index < monitor.master_count as usize {
+        let rect = if index < monitor.master_count as usize {
             let height: u32 = (monitor.client_area.height as u32 - master_y) / (min(tiled_count, monitor.master_count) - (index as u32));
-            let rect = Rect {
+            Rect {
                 x: monitor.client_area.x,
                 y: monitor.client_area.y + master_y as i32,
                 width: master_width,
                 height: height as i32
-            };
-            ShowWindow(client.hwnd, SW_NORMAL);
-            SetWindowPos(
-                client.hwnd,
-                None,
-                rect.x,
-                rect.y,
-                rect.width,
-                rect.height,
-                SET_WINDOW_POS_FLAGS(0)
-            )?;
-
-            client.rect = rect;
-            if ((master_y + height) as i32) < monitor.client_area.height {
-                master_y += height;
             }
         } else {
             let height: u32 = (monitor.client_area.height as u32 - stack_y) / (tiled_count - (index as u32));
-            let rect = Rect {
+            Rect {
                 x: monitor.client_area.x + master_width as i32,
                 y: monitor.client_area.y + stack_y as i32,
                 width: monitor.client_area.width - master_width,
                 height: height as i32
-            };
-            ShowWindow(client.hwnd, SW_NORMAL);
-            SetWindowPos(
-                client.hwnd,
-                None,
-                rect.x,
-                rect.y,
-                rect.width,
-                rect.height,
-                SET_WINDOW_POS_FLAGS(0)
-            )?;
-            client.rect = rect;
-            if ((stack_y + height) as i32) < monitor.client_area.height {
-                stack_y += height;
+            }
+        };
+
+        ShowWindow(client.hwnd, SW_NORMAL);
+        SetWindowPos(
+            client.hwnd,
+            None,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+            SET_WINDOW_POS_FLAGS(0)
+        )?;
+
+        client.rect = rect.clone();
+
+        if index < monitor.master_count as usize {
+            if ((master_y as i32) + rect.height) < monitor.client_area.height {
+                master_y += rect.height as u32;
+            }
+        } else {
+            if ((stack_y as i32) + rect.height) < monitor.client_area.height {
+                stack_y += rect.height as u32;
             }
         }
     }
