@@ -409,7 +409,9 @@ unsafe fn tile(monitor: &Monitor) -> Result<()> {
         if !is_tiled(client) {
             continue;
         }
-        let rect = if index < monitor.master_count as usize {
+
+        let is_master = index < monitor.master_count as usize;
+        let rect = if is_master {
             let height: u32 = (monitor.client_area.height as u32 - master_y) / (min(tiled_count, monitor.master_count) - (index as u32));
             Rect {
                 x: monitor.client_area.x,
@@ -440,14 +442,13 @@ unsafe fn tile(monitor: &Monitor) -> Result<()> {
 
         client.rect = rect.clone();
 
-        if index < monitor.master_count as usize {
-            if ((master_y as i32) + rect.height) < monitor.client_area.height {
-                master_y += rect.height as u32;
-            }
-        } else {
-            if ((stack_y as i32) + rect.height) < monitor.client_area.height {
-                stack_y += rect.height as u32;
-            }
+        let next_y = (is_master as u32) * master_y + (!is_master as u32) * stack_y + rect.height as u32;
+
+        if is_master && (next_y < monitor.client_area.height as u32) {
+            master_y += rect.height as u32;
+        } 
+        if !is_master && (next_y < monitor.client_area.height as u32) {
+            stack_y += rect.height as u32;
         }
     }
 
