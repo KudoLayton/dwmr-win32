@@ -328,19 +328,29 @@ unsafe fn scan() -> Result<()> {
     EnumWindows(Some(scan_enum), None)?;
 
     let focus_hwnd = GetForegroundWindow();
+    let mut selected_client: Option<Client> = None;
+    let mut selected_index: Option<usize> = None;
     for monitor in DWMR_APP.monitors.write().unwrap().iter() {
-        let clients = monitor.clients.read().unwrap();
-        for client in clients.iter() {
+        let mut clients = monitor.clients.write().unwrap();
+        for (index, client) in clients.iter().enumerate() {
             if client.hwnd != focus_hwnd {
                 continue;
             }
 
-            let selected_monitor = client.monitor.clone();
-            *DWMR_APP.selected_monitor.write().unwrap() = selected_monitor.clone();
-            if let Some(monitor_arc) = selected_monitor.upgrade() {
-                *monitor_arc.selected_client.write().unwrap() = Some(focus_hwnd);
-            }
+            *DWMR_APP.selected_monitor.write().unwrap() = Arc::downgrade(monitor);
+            *monitor.selected_client.write().unwrap() = Some(focus_hwnd);
+            selected_client = Some(client.clone());
+            selected_index = Some(index);
+            break;
         }
+
+        if selected_index.is_none() {
+            continue;
+        }
+
+        clients.remove(selected_index.unwrap());
+        clients.push(selected_client.clone().unwrap());
+        break;
     }
     Ok(())
 }
