@@ -13,7 +13,8 @@ use windows::{
 use std::{
     sync::*, 
     collections::*,
-    mem::size_of
+    mem::size_of,
+    rc::*, usize
 };
 
 mod test;
@@ -62,6 +63,7 @@ struct Monitor {
     bar_y: i32,
     rect: Rect,
     client_area: Rect,
+    clients: RwLock<LinkedList<Arc<Client>>>
 }
 
 #[derive(Default)]
@@ -81,13 +83,14 @@ struct Client {
     is_fixed: bool,
     is_urgent: bool,
     is_cloaked: bool,
+    monitor: Arc<Monitor>,
 }
 
 #[derive(Default)]
 struct DwmrApp {
     hwnd: RwLock<Option<HWND>>,
-    monitors: RwLock<Vec<Monitor>>,
-    clients: RwLock<LinkedList<Client>>,
+    monitors: RwLock<Vec<Arc<Monitor>>>,
+    clients: RwLock<LinkedList<Arc<Client>>>,
 }
 
 lazy_static! {
@@ -137,13 +140,13 @@ unsafe extern "system" fn update_geom(hmonitor: HMONITOR, _: HDC, rect: *mut REC
     //unsigned shot to str
     let _monitor_name = PCWSTR::from_raw(monitor_info.szDevice.as_ptr()).to_string().unwrap();
 
-    let monitor = Monitor{
+    let monitor = Arc::new(Monitor{
         name: monitor_info.szDevice,
         index: DWMR_APP.monitors.read().unwrap().len() as u32,
         rect: Rect::from_win_rect(&monitor_info.monitorInfo.rcMonitor),
         client_area: Rect::from_win_rect(&monitor_info.monitorInfo.rcWork),
         ..Default::default()
-    };
+    });
 
     DWMR_APP.monitors.write().unwrap().push(monitor);
     TRUE
@@ -249,7 +252,7 @@ unsafe fn get_root(hwnd: &HWND) -> Result<HWND> {
     Ok(current)
 }
 
-unsafe fn create_client(hwnd: &HWND) -> Result<Client> {
+unsafe fn manage(hwnd: &HWND) -> Result<Arc<Client>> {
     let mut window_info = WINDOWINFO {
         cbSize: size_of::<WINDOWINFO>() as u32,
         ..Default::default()
@@ -261,16 +264,41 @@ unsafe fn create_client(hwnd: &HWND) -> Result<Client> {
     let root = get_root(hwnd)?;
     let is_cloaked = is_cloaked(hwnd)?;
     let is_minimized = IsIconic(*hwnd) == TRUE;
-    let client = Client {
+    let rect = Rect::from_win_rect(&window_info.rcWindow);
+    let center_x = rect.x + rect.width / 2;
+    let center_y = rect.y + rect.height / 2;
+
+    let monitors = DWMR_APP.monitors.read().unwrap();
+    assert!(!monitors.is_empty());
+
+    let mut monitor_index:usize = 0;
+    for (index, monitor_iter) in monitors.iter().enumerate() {
+        let monitor_rect = &monitor_iter.as_ref().rect;
+
+        let left_check = monitor_rect.x <= center_x;
+        let right_check = center_x <= monitor_rect.x + monitor_rect.width;
+        let top_check = monitor_rect.y <= center_y;
+        let bottom_check = center_y <= monitor_rect.y + monitor_rect.height;
+
+        if left_check && right_check && top_check && bottom_check {
+            monitor_index = index;
+        }
+    }
+
+    let monitor = &monitors[monitor_index];
+    let client = Arc::new(Client {
         hwnd: *hwnd,
         parent,
         root,
-        rect: Rect::from_win_rect(&window_info.rcWindow),
+        rect,
         bw: 0,
         is_minimized,
         is_cloaked,
+        monitor: monitor.clone(),
         ..Default::default()
-    };
+    });
+
+    monitor.clients.write().unwrap().push_back(client.clone());
     Ok(client)
 }
 
@@ -278,10 +306,7 @@ unsafe extern "system" fn scan(hwnd: HWND, _: LPARAM) -> BOOL {
     if !is_manageable(&hwnd).unwrap() {
         return TRUE;
     }
-
-    let new_client = create_client(&hwnd).unwrap();
-    DWMR_APP.clients.write().unwrap().push_back(new_client);
-
+    let _ = manage(&hwnd);
     TRUE
 }
 
