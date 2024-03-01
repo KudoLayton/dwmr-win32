@@ -443,11 +443,13 @@ unsafe fn tile(monitor: &Monitor) -> Result<()> {
         client.rect = rect.clone();
 
         let next_y = (is_master as u32) * master_y + (!is_master as u32) * stack_y + rect.height as u32;
+        if next_y >= monitor.client_area.height as u32 {
+            continue;
+        }
 
-        if is_master && (next_y < monitor.client_area.height as u32) {
+        if is_master  {
             master_y += rect.height as u32;
-        } 
-        if !is_master && (next_y < monitor.client_area.height as u32) {
+        } else{
             stack_y += rect.height as u32;
         }
     }
