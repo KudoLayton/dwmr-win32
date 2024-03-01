@@ -15,7 +15,8 @@ use std::{
     collections::*,
     mem::size_of,
     usize,
-    cmp::*
+    cmp::*,
+    ops::*
 };
 
 mod test;
@@ -36,7 +37,7 @@ const S_APP_NAME: PCSTR = s!("dwmr-win32");
 const BAR_HEIGHT: i32 = 20;
 
 
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 struct Rect {
     x: i32,
     y: i32,
@@ -55,7 +56,7 @@ impl Rect {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Monitor {
     //LPCWSTR type
     name: [u16; 32],
@@ -65,7 +66,7 @@ struct Monitor {
     bar_y: i32,
     rect: Rect,
     client_area: Rect,
-    clients: RwLock<LinkedList<Arc<Client>>>
+    clients: RwLock<Vec<Client>>
 }
 
 impl Monitor {
@@ -84,12 +85,12 @@ unsafe fn arrange() -> Result<()> {
     Ok(())
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 struct Client {
     hwnd: HWND,
     parent: HWND,
     root: HWND,
-    rect: RwLock<Rect>,
+    rect: Rect,
     bw: i32,
     tags: u32,
     is_minimized: bool,
@@ -104,11 +105,10 @@ struct Client {
     monitor: std::sync::Weak<Monitor>,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct DwmrApp {
     hwnd: RwLock<Option<HWND>>,
     monitors: RwLock<Vec<Arc<Monitor>>>,
-    clients: RwLock<LinkedList<Arc<Client>>>,
 }
 
 lazy_static! {
@@ -272,7 +272,7 @@ unsafe fn get_root(hwnd: &HWND) -> Result<HWND> {
     Ok(current)
 }
 
-unsafe fn manage(hwnd: &HWND) -> Result<Arc<Client>> {
+unsafe fn manage(hwnd: &HWND) -> Result<Client> {
     let mut window_info = WINDOWINFO {
         cbSize: size_of::<WINDOWINFO>() as u32,
         ..Default::default()
@@ -306,7 +306,7 @@ unsafe fn manage(hwnd: &HWND) -> Result<Arc<Client>> {
     }
 
     let monitor = &monitors[monitor_index];
-    let client = Arc::new(Client {
+    let client = Client {
         hwnd: *hwnd,
         parent,
         root,
@@ -316,9 +316,9 @@ unsafe fn manage(hwnd: &HWND) -> Result<Arc<Client>> {
         is_cloaked,
         monitor: Arc::downgrade(monitor),
         ..Default::default()
-    });
+    };
 
-    monitor.clients.write().unwrap().push_back(client.clone());
+    monitor.clients.write().unwrap().push(client.clone());
     Ok(client)
 }
 
@@ -405,7 +405,7 @@ unsafe fn tile(monitor: &Monitor) -> Result<()> {
         monitor.rect.width
     };
 
-    for (index, client) in clients.iter_mut().enumerate() {
+    for (index, client) in clients.iter_mut().rev().enumerate() {
         if !is_tiled(client) {
             continue;
         }
@@ -427,7 +427,8 @@ unsafe fn tile(monitor: &Monitor) -> Result<()> {
                 rect.height,
                 SET_WINDOW_POS_FLAGS(0)
             )?;
-            *client.rect.write().unwrap() = rect;
+
+            client.rect = rect;
             if ((master_y + height) as i32) < monitor.client_area.height {
                 master_y += height;
             }
@@ -449,7 +450,7 @@ unsafe fn tile(monitor: &Monitor) -> Result<()> {
                 rect.height,
                 SET_WINDOW_POS_FLAGS(0)
             )?;
-            *client.rect.write().unwrap() = rect;
+            client.rect = rect;
             if ((stack_y + height) as i32) < monitor.client_area.height {
                 stack_y += height;
             }
