@@ -14,7 +14,8 @@ use std::{
     sync::*, 
     collections::*,
     mem::size_of,
-    rc::*, usize
+    usize,
+    cmp::*
 };
 
 mod test;
@@ -58,7 +59,8 @@ impl Rect {
 struct Monitor {
     //LPCWSTR type
     name: [u16; 32],
-    master_index: u32,
+    master_count: u32,
+    master_factor: f32,
     index: u32,
     bar_y: i32,
     rect: Rect,
@@ -66,12 +68,28 @@ struct Monitor {
     clients: RwLock<LinkedList<Arc<Client>>>
 }
 
+impl Monitor {
+    unsafe fn arrangemon(&self) -> Result<()> {
+        tile(self)?;
+        Ok(())
+    }
+}
+
+unsafe fn arrange() -> Result<()> {
+    let monitors = DWMR_APP.monitors.read().unwrap();
+    for monitor in monitors.iter() {
+        monitor.arrangemon()?;
+    }
+
+    Ok(())
+}
+
 #[derive(Default)]
 struct Client {
     hwnd: HWND,
     parent: HWND,
     root: HWND,
-    rect: Rect,
+    rect: RwLock<Rect>,
     bw: i32,
     tags: u32,
     is_minimized: bool,
@@ -83,7 +101,7 @@ struct Client {
     is_fixed: bool,
     is_urgent: bool,
     is_cloaked: bool,
-    monitor: Arc<Monitor>,
+    monitor: std::sync::Weak<Monitor>,
 }
 
 #[derive(Default)]
@@ -145,6 +163,8 @@ unsafe extern "system" fn update_geom(hmonitor: HMONITOR, _: HDC, rect: *mut REC
         index: DWMR_APP.monitors.read().unwrap().len() as u32,
         rect: Rect::from_win_rect(&monitor_info.monitorInfo.rcMonitor),
         client_area: Rect::from_win_rect(&monitor_info.monitorInfo.rcWork),
+        master_count: 1,
+        master_factor: 0.5,
         ..Default::default()
     });
 
@@ -290,11 +310,11 @@ unsafe fn manage(hwnd: &HWND) -> Result<Arc<Client>> {
         hwnd: *hwnd,
         parent,
         root,
-        rect,
+        rect: rect.into(),
         bw: 0,
         is_minimized,
         is_cloaked,
-        monitor: monitor.clone(),
+        monitor: Arc::downgrade(monitor),
         ..Default::default()
     });
 
@@ -302,7 +322,12 @@ unsafe fn manage(hwnd: &HWND) -> Result<Arc<Client>> {
     Ok(client)
 }
 
-unsafe extern "system" fn scan(hwnd: HWND, _: LPARAM) -> BOOL {
+unsafe fn scan() -> Result<()> {
+    EnumWindows(Some(scan_enum), None)?;
+    Ok(())
+}
+
+unsafe extern "system" fn scan_enum(hwnd: HWND, _: LPARAM) -> BOOL {
     if !is_manageable(&hwnd).unwrap() {
         return TRUE;
     }
@@ -320,7 +345,7 @@ unsafe fn setup(hinstance: &HINSTANCE) -> Result<()> {
 
     request_update_geom()?;
 
-    EnumWindows(Some(scan), None)?;
+    //EnumWindows(Some(scan_enum), None)?;
 
     if RegisterClassW(&wnd_class) == 0{
         GetLastError()?;
@@ -350,6 +375,90 @@ unsafe fn setup(hinstance: &HINSTANCE) -> Result<()> {
     Ok(())
 }
 
+unsafe fn is_tiled(client: &Client) -> bool {
+    !client.is_floating
+}
+
+unsafe fn tile(monitor: &Monitor) -> Result<()> {
+    let mut clients = monitor.clients.write().unwrap();
+
+    let mut tiled_count: u32 = 0;
+    for client in clients.iter() {
+        tiled_count += is_tiled(client) as u32;
+    }
+
+    if tiled_count <= 0 {
+        return Ok(());
+    }
+
+    //let mut master_width = 0;
+    let mut master_y: u32 = 0;
+    let mut stack_y: u32 = 0;
+
+    let master_width = if tiled_count > monitor.master_count {
+        if monitor.master_count > 0 {
+            ((monitor.rect.width as f32) * monitor.master_factor) as i32
+        } else {
+            0
+        }
+    } else {
+        monitor.rect.width
+    };
+
+    for (index, client) in clients.iter_mut().enumerate() {
+        if !is_tiled(client) {
+            continue;
+        }
+        if index < monitor.master_count as usize {
+            let height: u32 = (monitor.client_area.height as u32 - master_y) / (min(tiled_count, monitor.master_count) - (index as u32));
+            let rect = Rect {
+                x: monitor.client_area.x,
+                y: monitor.client_area.y + master_y as i32,
+                width: master_width,
+                height: height as i32
+            };
+            ShowWindow(client.hwnd, SW_NORMAL);
+            SetWindowPos(
+                client.hwnd,
+                None,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                SET_WINDOW_POS_FLAGS(0)
+            )?;
+            *client.rect.write().unwrap() = rect;
+            if ((master_y + height) as i32) < monitor.client_area.height {
+                master_y += height;
+            }
+        } else {
+            let height: u32 = (monitor.client_area.height as u32 - stack_y) / (tiled_count - (index as u32));
+            let rect = Rect {
+                x: monitor.client_area.x + master_width as i32,
+                y: monitor.client_area.y + stack_y as i32,
+                width: monitor.client_area.width - master_width,
+                height: height as i32
+            };
+            ShowWindow(client.hwnd, SW_NORMAL);
+            SetWindowPos(
+                client.hwnd,
+                None,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                SET_WINDOW_POS_FLAGS(0)
+            )?;
+            *client.rect.write().unwrap() = rect;
+            if ((stack_y + height) as i32) < monitor.client_area.height {
+                stack_y += height;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 unsafe fn cleanup(hinstance: &HINSTANCE) -> Result<()> {
     //let mut hwnd = DWMR_APP.hwnd.write().unwrap();
     //DestroyWindow((*hwnd).unwrap())?;
@@ -365,6 +474,8 @@ fn main() -> Result<()> {
         let hmodule = GetModuleHandleW(None)?;
         let hinstance: HINSTANCE = hmodule.into();
         setup(&hinstance)?;
+        scan()?;
+        arrange()?;
         cleanup(&hinstance)?; 
     }
     Ok(())
