@@ -66,6 +66,7 @@ struct Monitor {
     bar_y: i32,
     rect: Rect,
     client_area: Rect,
+    selected_client: RwLock<Option<HWND>>,
     clients: RwLock<Vec<Client>>
 }
 
@@ -109,6 +110,7 @@ struct Client {
 struct DwmrApp {
     hwnd: RwLock<Option<HWND>>,
     monitors: RwLock<Vec<Arc<Monitor>>>,
+    selected_monitor: RwLock<std::sync::Weak<Monitor>>,
 }
 
 lazy_static! {
@@ -324,6 +326,22 @@ unsafe fn manage(hwnd: &HWND) -> Result<Client> {
 
 unsafe fn scan() -> Result<()> {
     EnumWindows(Some(scan_enum), None)?;
+
+    let focus_hwnd = GetForegroundWindow();
+    for monitor in DWMR_APP.monitors.write().unwrap().iter() {
+        let clients = monitor.clients.read().unwrap();
+        for client in clients.iter() {
+            if client.hwnd != focus_hwnd {
+                continue;
+            }
+
+            let selected_monitor = client.monitor.clone();
+            *DWMR_APP.selected_monitor.write().unwrap() = selected_monitor.clone();
+            if let Some(monitor_arc) = selected_monitor.upgrade() {
+                *monitor_arc.selected_client.write().unwrap() = Some(focus_hwnd);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -454,6 +472,10 @@ unsafe fn tile(monitor: &Monitor) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+unsafe fn focus_stack(increase_index: u32) -> Result<()> {
     Ok(())
 }
 
