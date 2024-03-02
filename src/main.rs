@@ -66,7 +66,7 @@ struct Monitor {
     name: [u16; 32],
     master_count: u32,
     master_factor: f32,
-    index: u32,
+    index: usize,
     bar_y: i32,
     rect: Rect,
     client_area: Rect,
@@ -184,7 +184,7 @@ unsafe extern "system" fn update_geom(hmonitor: HMONITOR, _: HDC, rect: *mut REC
 
     let monitor = Arc::new(Monitor{
         name: monitor_info.szDevice,
-        index: DWMR_APP.monitors.read().unwrap().len() as u32,
+        index: DWMR_APP.monitors.read().unwrap().len(),
         rect: Rect::from_win_rect(&monitor_info.monitorInfo.rcMonitor),
         client_area: Rect::from_win_rect(&monitor_info.monitorInfo.rcWork),
         master_count: 1,
@@ -523,6 +523,49 @@ fn offset_to_new_index(length: usize, current_index: usize, offset_index: i32) -
     }
 }
 
+unsafe fn unfocus() -> Result<()> {
+    let desktop_hwnd = FindWindowW(W_WALLPAPER_CLASS_NAME, None);
+    if desktop_hwnd.0 == 0 {
+        GetLastError()?;
+    }
+
+    let result = SetForegroundWindow(desktop_hwnd);
+    if result.0 == 0 {
+        GetLastError()?;
+    }
+
+    Ok(())
+}
+
+unsafe fn refresh_focus() -> Result<()> {
+    let selected_monitor_weak = DWMR_APP.selected_monitor.read().unwrap();
+    if selected_monitor_weak.upgrade().is_none() {
+        return Ok(());
+    }
+
+    let selected_monitor = selected_monitor_weak.upgrade().unwrap();
+    if selected_monitor.clients.read().unwrap().len() == 0 {
+        unfocus()?;
+        return Ok(());
+    }
+
+    let selected_client_option = selected_monitor.get_selected_client();
+    if selected_client_option.is_none() {
+        unfocus()?;
+        return Ok(());
+    }
+
+    let selected_monitor_clients = selected_monitor.clients.read().unwrap();
+    let selected_client_hwnd = &selected_monitor_clients[selected_client_option.unwrap()].hwnd;
+
+    let result = SetForegroundWindow(*selected_client_hwnd);
+    if result.0 == 0 {
+        GetLastError()?;
+    }
+
+    Ok(())
+}
+
 unsafe fn focus_monitor(offset_index: i32) -> Result<()>
 {
     let monitors = DWMR_APP.monitors.read().unwrap();
@@ -530,10 +573,32 @@ unsafe fn focus_monitor(offset_index: i32) -> Result<()>
         return Ok(());
     }
 
-    let mut selected_monitor = DWMR_APP.selected_monitor.write().unwrap();
-    if selected_monitor.upgrade().is_none() {
-        *selected_monitor = Arc::downgrade(&monitors[0]);
+    {
+        let mut selected_monitor = DWMR_APP.selected_monitor.write().unwrap();
+        if selected_monitor.upgrade().is_none() {
+            *selected_monitor = Arc::downgrade(&monitors[0]);
+        } else {
+            let current_selected_index = selected_monitor.upgrade().unwrap().index;
+            let new_index = offset_to_new_index(monitors.len(), current_selected_index, offset_index);
+            if new_index == current_selected_index {
+                return Ok(());
+            }
+
+            *selected_monitor = Arc::downgrade(&monitors[new_index]);
+        }
+        let selected_monitor_arc = selected_monitor.upgrade().unwrap();
+        let mut selected_hwnd = selected_monitor_arc.selected_hwnd.write().unwrap();
+        if selected_hwnd.is_none() {
+            let clients = selected_monitor_arc.clients.read().unwrap();
+            *selected_hwnd = match clients.last() {
+                Some(client) => Some(client.hwnd),
+                None => None
+            };
+        }
     }
+
+    refresh_focus()?;
+
     Ok(())
 }
 
@@ -588,8 +653,7 @@ fn main() -> Result<()> {
         setup(&hinstance)?;
         scan()?;
         arrange()?;
-        focus_stack(-1)?;
-        SetFocus(None);
+        focus_monitor(1)?;
         cleanup(&hinstance)?; 
     }
     Ok(())
