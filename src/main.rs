@@ -66,7 +66,7 @@ struct Monitor {
     bar_y: i32,
     rect: Rect,
     client_area: Rect,
-    selected_client: RwLock<Option<HWND>>,
+    selected_hwnd: RwLock<Option<HWND>>,
     clients: RwLock<Vec<Client>>
 }
 
@@ -74,6 +74,22 @@ impl Monitor {
     unsafe fn arrangemon(&self) -> Result<()> {
         tile(self)?;
         Ok(())
+    }
+
+    fn get_selected_client(&self) -> Option<usize> {
+        let selected_hwnd_option = self.selected_hwnd.read().unwrap();
+        if selected_hwnd_option.is_none() {
+            return None;
+        }
+
+        let selected_hwnd = selected_hwnd_option.unwrap();
+        let clients = self.clients.read().unwrap();
+        for (index, client) in clients.iter().enumerate() {
+            if client.hwnd == selected_hwnd {
+                return Some(index);
+            }
+        }
+        None
     }
 }
 
@@ -338,7 +354,7 @@ unsafe fn scan() -> Result<()> {
             }
 
             *DWMR_APP.selected_monitor.write().unwrap() = Arc::downgrade(monitor);
-            *monitor.selected_client.write().unwrap() = Some(focus_hwnd);
+            *monitor.selected_hwnd.write().unwrap() = Some(focus_hwnd);
             selected_client = Some(client.clone());
             selected_index = Some(index);
             break;
@@ -485,7 +501,40 @@ unsafe fn tile(monitor: &Monitor) -> Result<()> {
     Ok(())
 }
 
-unsafe fn focus_stack(increase_index: u32) -> Result<()> {
+unsafe fn focus_stack(offset_index: i32) -> Result<()> {
+    let selected_monitor_option = DWMR_APP.selected_monitor.read().unwrap().upgrade();
+    if selected_monitor_option.is_none() {
+        return Ok(());
+    }
+
+    let selected_monitor = selected_monitor_option.unwrap();
+    let selected_client_index_option = selected_monitor.get_selected_client();
+
+    if selected_client_index_option.is_none() {
+        return Ok(());
+    }
+
+    let selected_client_index = selected_client_index_option.unwrap();
+    let clients = selected_monitor.clients.read().unwrap();
+    let clients_count = clients.len();
+    if clients_count == 0 {
+        return Ok(());
+    }
+
+    let is_underfloor = (selected_client_index as i32 - offset_index) < 0;
+    let is_overfloor = (selected_client_index as i32 - offset_index) >= (clients_count as i32);
+
+    let new_focus_index = match (is_underfloor, is_overfloor) {
+        (true, false) => (clients_count - 1) as usize,
+        (false, true) => 0 as usize,
+        _ => (selected_client_index as i32 - offset_index) as usize
+    };
+    let new_focus_hwnd = clients[new_focus_index].hwnd;
+    *selected_monitor.selected_hwnd.write().unwrap() = Some(new_focus_hwnd);
+    let result = SetForegroundWindow(new_focus_hwnd);
+    if result == FALSE {
+        GetLastError()?;
+    }
     Ok(())
 }
 
@@ -506,6 +555,7 @@ fn main() -> Result<()> {
         setup(&hinstance)?;
         scan()?;
         arrange()?;
+        focus_stack(-1)?;
         cleanup(&hinstance)?; 
     }
     Ok(())
