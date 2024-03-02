@@ -62,8 +62,7 @@ impl Rect {
 
 #[derive(Default, Debug)]
 struct Monitor {
-    //LPCWSTR type
-    name: [u16; 32],
+    name: [u16; 32], //LPCWSTR type
     master_count: u32,
     master_factor: f32,
     index: usize,
@@ -71,7 +70,7 @@ struct Monitor {
     rect: Rect,
     client_area: Rect,
     selected_hwnd: RwLock<Option<HWND>>,
-    clients: RwLock<Vec<Client>>
+    clients: RwLock<Vec<Client>> // Reversed order
 }
 
 impl Monitor {
@@ -80,7 +79,7 @@ impl Monitor {
         Ok(())
     }
 
-    fn get_selected_client(&self) -> Option<usize> {
+    fn get_selected_client_index(&self) -> Option<usize> {
         let selected_hwnd_option = self.selected_hwnd.read().unwrap();
         if selected_hwnd_option.is_none() {
             return None;
@@ -557,7 +556,7 @@ unsafe fn refresh_focus() -> Result<()> {
         return Ok(());
     }
 
-    let selected_client_option = selected_monitor.get_selected_client();
+    let selected_client_option = selected_monitor.get_selected_client_index();
     if selected_client_option.is_none() {
         unfocus()?;
         return Ok(());
@@ -613,7 +612,7 @@ unsafe fn focus_stack(offset_index: i32) -> Result<()> {
     }
 
     let selected_monitor = selected_monitor_option.unwrap();
-    let selected_client_index_option = selected_monitor.get_selected_client();
+    let selected_client_index_option = selected_monitor.get_selected_client_index();
 
     if selected_client_index_option.is_none() {
         return Ok(());
@@ -633,10 +632,34 @@ unsafe fn focus_stack(offset_index: i32) -> Result<()> {
 
     let new_focus_hwnd = clients[new_focus_index].hwnd;
     *selected_monitor.selected_hwnd.write().unwrap() = Some(new_focus_hwnd);
-    let result = SetForegroundWindow(new_focus_hwnd);
-    if result == FALSE {
-        GetLastError()?;
+    focus(&new_focus_hwnd)?;
+    Ok(())
+}
+
+unsafe fn zoom() -> Result<()> {
+    let selected_monitor_arc_option = DWMR_APP.selected_monitor.read().unwrap().upgrade();
+    if selected_monitor_arc_option.is_none() {
+        return Ok(());
     }
+
+    let selected_monitor_arc = selected_monitor_arc_option.unwrap();
+    let selected_client_index_option = selected_monitor_arc.get_selected_client_index();
+
+    if selected_client_index_option.is_none() {
+        return Ok(());
+    }
+
+    let selected_client_idnex = selected_client_index_option.unwrap();
+
+    {
+        let mut clients = selected_monitor_arc.clients.write().unwrap();
+        let selected_client = clients[selected_client_idnex].clone();
+        clients.remove(selected_client_idnex);
+        clients.push(selected_client);
+    }
+
+    tile(selected_monitor_arc.as_ref())?;
+
     Ok(())
 }
 
@@ -657,7 +680,8 @@ fn main() -> Result<()> {
         setup(&hinstance)?;
         scan()?;
         arrange()?;
-        focus_monitor(1)?;
+        focus_stack(1)?;
+        zoom()?;
         cleanup(&hinstance)?; 
     }
     Ok(())
