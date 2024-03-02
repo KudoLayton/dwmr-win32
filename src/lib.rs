@@ -106,7 +106,7 @@ pub union Arg {
 
 pub struct Key {
     pub mod_key: HOT_KEY_MODIFIERS,
-    pub key: u32,
+    pub key: char,
     pub func: unsafe fn(&Arg)->Result<()>,
     pub arg: Option<Arg>
 }
@@ -234,7 +234,7 @@ unsafe fn grab_keys() -> Result<()> {
     let hwnd = hwnd_option.unwrap();
 
     for (index, key) in KEYS.iter().enumerate() {
-        RegisterHotKey(hwnd, index as i32, key.mod_key, key.key)?;
+        RegisterHotKey(hwnd, index as i32, key.mod_key, key.key as u32)?;
     }
     Ok(())
 }
