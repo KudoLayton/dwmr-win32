@@ -523,6 +523,14 @@ fn offset_to_new_index(length: usize, current_index: usize, offset_index: i32) -
     }
 }
 
+unsafe fn focus(hwnd: &HWND) -> Result<()> {
+    let result = SetForegroundWindow(*hwnd);
+    if result.0 == 0 {
+        GetLastError()?;
+    }
+    Ok(())
+}
+
 unsafe fn unfocus() -> Result<()> {
     let desktop_hwnd = FindWindowW(W_WALLPAPER_CLASS_NAME, None);
     if desktop_hwnd.0 == 0 {
@@ -557,11 +565,7 @@ unsafe fn refresh_focus() -> Result<()> {
 
     let selected_monitor_clients = selected_monitor.clients.read().unwrap();
     let selected_client_hwnd = &selected_monitor_clients[selected_client_option.unwrap()].hwnd;
-
-    let result = SetForegroundWindow(*selected_client_hwnd);
-    if result.0 == 0 {
-        GetLastError()?;
-    }
+    focus(selected_client_hwnd)?;
 
     Ok(())
 }
