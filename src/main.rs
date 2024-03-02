@@ -3,7 +3,10 @@ use windows::{
     Win32::{
         Foundation::*,
         System::LibraryLoader::*,
-        UI::WindowsAndMessaging::*,
+        UI::{
+            WindowsAndMessaging::*,
+            Input::KeyboardAndMouse::*,
+        },
         Graphics::{
             Dwm::*,
             Gdi::*
@@ -34,6 +37,7 @@ extern  crate lazy_static;
 const W_APP_NAME: PCWSTR = w!("dwmr-win32");
 const S_APP_NAME: PCSTR = s!("dwmr-win32");
 
+const W_WALLPAPER_CLASS_NAME: PCWSTR = w!("Progman");
 const BAR_HEIGHT: i32 = 20;
 
 
@@ -125,6 +129,7 @@ struct Client {
 #[derive(Default, Debug)]
 struct DwmrApp {
     hwnd: RwLock<Option<HWND>>,
+    wallpaper_hwnd: RwLock<Option<HWND>>,
     monitors: RwLock<Vec<Arc<Monitor>>>,
     selected_monitor: RwLock<std::sync::Weak<Monitor>>,
 }
@@ -154,6 +159,7 @@ lazy_static! {
         "Scrollbar".to_string(),
         "Progman".to_string(),
     ]);
+
 }
 
 unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
@@ -380,16 +386,21 @@ unsafe extern "system" fn scan_enum(hwnd: HWND, _: LPARAM) -> BOOL {
 }
 
 unsafe fn setup(hinstance: &HINSTANCE) -> Result<()> {
+    request_update_geom()?;
+
+    let wallpaper_hwnd = FindWindowW(W_WALLPAPER_CLASS_NAME, None);
+    if wallpaper_hwnd.0 == 0 {
+        GetLastError()?;
+    }
+
+    *DWMR_APP.wallpaper_hwnd.write().unwrap() = Some(wallpaper_hwnd);
+
     let wnd_class = WNDCLASSW {
         lpfnWndProc: Some(wnd_proc),
         hInstance: *hinstance,
         lpszClassName: W_APP_NAME,
         ..Default::default()
     };
-
-    request_update_geom()?;
-
-    //EnumWindows(Some(scan_enum), None)?;
 
     if RegisterClassW(&wnd_class) == 0{
         GetLastError()?;
@@ -501,6 +512,31 @@ unsafe fn tile(monitor: &Monitor) -> Result<()> {
     Ok(())
 }
 
+fn offset_to_new_index(length: usize, current_index: usize, offset_index: i32) -> usize {
+    let is_underfloor = (current_index as i32 - offset_index) < 0;
+    let is_overfloor = (current_index as i32 - offset_index) >= (length as i32);
+
+    match (is_underfloor, is_overfloor) {
+        (true, false) => (length - 1) as usize,
+        (false, true) => 0 as usize,
+        _ => (current_index as i32 - offset_index) as usize
+    }
+}
+
+unsafe fn focus_monitor(offset_index: i32) -> Result<()>
+{
+    let monitors = DWMR_APP.monitors.read().unwrap();
+    if monitors.len() == 0 {
+        return Ok(());
+    }
+
+    let mut selected_monitor = DWMR_APP.selected_monitor.write().unwrap();
+    if selected_monitor.upgrade().is_none() {
+        *selected_monitor = Arc::downgrade(&monitors[0]);
+    }
+    Ok(())
+}
+
 unsafe fn focus_stack(offset_index: i32) -> Result<()> {
     let selected_monitor_option = DWMR_APP.selected_monitor.read().unwrap().upgrade();
     if selected_monitor_option.is_none() {
@@ -521,14 +557,11 @@ unsafe fn focus_stack(offset_index: i32) -> Result<()> {
         return Ok(());
     }
 
-    let is_underfloor = (selected_client_index as i32 - offset_index) < 0;
-    let is_overfloor = (selected_client_index as i32 - offset_index) >= (clients_count as i32);
+    let new_focus_index = offset_to_new_index(clients_count, selected_client_index, offset_index);
+    if new_focus_index == selected_client_index {
+        return Ok(());
+    }
 
-    let new_focus_index = match (is_underfloor, is_overfloor) {
-        (true, false) => (clients_count - 1) as usize,
-        (false, true) => 0 as usize,
-        _ => (selected_client_index as i32 - offset_index) as usize
-    };
     let new_focus_hwnd = clients[new_focus_index].hwnd;
     *selected_monitor.selected_hwnd.write().unwrap() = Some(new_focus_hwnd);
     let result = SetForegroundWindow(new_focus_hwnd);
@@ -556,6 +589,7 @@ fn main() -> Result<()> {
         scan()?;
         arrange()?;
         focus_stack(-1)?;
+        SetFocus(None);
         cleanup(&hinstance)?; 
     }
     Ok(())
