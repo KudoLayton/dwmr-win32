@@ -26,6 +26,8 @@ use std::{
 pub mod config;
 use config::*;
 
+#[cfg(test)]
+mod test;
 
 // a macro to check bit flags for u32
 macro_rules! has_flag {
@@ -709,17 +711,32 @@ pub unsafe fn zoom(_: &Arg) -> Result<()> {
     Ok(())
 }
 
-pub unsafe fn cleanup() -> Result<()> {
-    let hmodule = GetModuleHandleW(None)?;
-    let hinstance: HINSTANCE = hmodule.into();
+pub unsafe fn quit(_: &Arg) -> Result<()> {
+    let hwnd_option = DWMR_APP.hwnd.read().unwrap();
+    if hwnd_option.is_none() {
+        return Ok(());
+    }
 
+    let hwnd = hwnd_option.unwrap();
+    PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0))?;
+    Ok(())
+}
+
+pub unsafe fn cleanup() -> Result<()> {
     {
         let mut hwnd = DWMR_APP.hwnd.write().unwrap();
+
+        if hwnd.is_none() {
+            return Ok(());
+        }
+
+        for key_index in 0..KEYS.len() {
+            UnregisterHotKey(hwnd.unwrap(), key_index as i32)?;
+        }
+
         DestroyWindow((*hwnd).unwrap())?;
         *hwnd = None;
     }
-
-    UnregisterClassW(W_APP_NAME, hinstance)?;
 
     Ok(())
 }
