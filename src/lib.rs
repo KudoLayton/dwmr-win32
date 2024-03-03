@@ -109,7 +109,7 @@ pub union Arg {
 pub struct Key {
     pub mod_key: HOT_KEY_MODIFIERS,
     pub key: char,
-    pub func: unsafe fn(&Arg)->Result<()>,
+    pub func: unsafe fn(&Option<Arg>)->Result<()>,
     pub arg: Option<Arg>
 }
 
@@ -184,15 +184,22 @@ unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam:
     match msg {
         WM_CREATE => {
             LRESULT::default()
-        },
+        }
         WM_CLOSE => {
-            let _ = cleanup();
+            cleanup().unwrap();
             LRESULT::default()
-        },
+        }
         WM_DESTROY => {
             PostQuitMessage(0);
             LRESULT::default()
-        },
+        }
+        WM_HOTKEY => {
+            if wparam.0 < KEYS.len(){
+                let key = &KEYS[wparam.0];
+                (key.func)(&key.arg).unwrap();
+            }
+            LRESULT::default()
+        }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam)
     }
 }
@@ -711,7 +718,7 @@ pub unsafe fn zoom(_: &Arg) -> Result<()> {
     Ok(())
 }
 
-pub unsafe fn quit(_: &Arg) -> Result<()> {
+pub unsafe fn quit(_: &Option<Arg>) -> Result<()> {
     let hwnd_option = DWMR_APP.hwnd.read().unwrap();
     if hwnd_option.is_none() {
         return Ok(());
@@ -738,5 +745,14 @@ pub unsafe fn cleanup() -> Result<()> {
         *hwnd = None;
     }
 
+    Ok(())
+}
+
+pub unsafe fn run() -> Result<()> {
+    let mut msg = MSG::default();
+    while GetMessageW(&mut msg, None, 0, 0) == TRUE {
+        TranslateMessage(&mut msg);
+        DispatchMessageW(&mut msg);
+    }
     Ok(())
 }
