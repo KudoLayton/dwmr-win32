@@ -1,5 +1,7 @@
 use super::*;
 
+pub const EXCLUDE_DEBUGGED_WINDOW: bool = true;
+
 pub const MOD_KEY: HOT_KEY_MODIFIERS = MOD_ALT;
 
 pub const KEYS: [Key; 6] = [

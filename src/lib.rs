@@ -1,6 +1,10 @@
 use windows::{
     core::*,
     Win32::{
+        System::{
+            Diagnostics::Debug::*, 
+            Threading::*
+        },
         Foundation::*,
         UI::{
             WindowsAndMessaging::*,
@@ -441,8 +445,31 @@ impl DwmrApp {
         Ok(is_cloaked)
     }
 
-    unsafe fn is_manageable(hwnd: &HWND) -> Result<bool>
-    {
+    unsafe fn is_debugged(hwnd: &HWND) -> Result<bool> {
+        let mut process_id: u32 = 0;
+        if GetWindowThreadProcessId(*hwnd, Some(&mut process_id as *mut _)) == 0 {
+            GetLastError()?;
+        }
+
+        let handle = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, process_id);
+        if let Err(ref e) = handle {
+            if e.code() != HRESULT::from(ERROR_ACCESS_DENIED) {
+                return Err(e.clone());
+            } else {
+                return Ok(false);
+            }
+        }
+
+        let mut is_debugged = FALSE;
+        CheckRemoteDebuggerPresent(handle?, &mut is_debugged)?;
+        if is_debugged == TRUE {
+            return Ok(true);
+        } else {
+            return Ok(false);
+        }
+    }
+
+    unsafe fn is_manageable(hwnd: &HWND) -> Result<bool> {
         let style = GetWindowLongW(*hwnd, GWL_STYLE) as u32;
         if has_flag!(style, WS_DISABLED.0) {
             return Ok(false);
@@ -482,6 +509,12 @@ impl DwmrApp {
         let class_name = PCWSTR::from_raw(class_name_buf.as_ptr()).to_string().unwrap();
         if DISALLOWED_CLASS.contains(&class_name) {
             return Ok(false);
+        }
+
+        if EXCLUDE_DEBUGGED_WINDOW {
+            if Self::is_debugged(hwnd)? {
+                return Ok(false);
+            }
         }
 
         let parent = GetParent(*hwnd);
