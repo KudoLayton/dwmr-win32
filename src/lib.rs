@@ -2,7 +2,6 @@ use windows::{
     core::*,
     Win32::{
         Foundation::*,
-        System::LibraryLoader::*,
         UI::{
             WindowsAndMessaging::*,
             Input::KeyboardAndMouse::*,
@@ -15,7 +14,6 @@ use windows::{
 };
 
 use std::{
-    sync::*, 
     collections::*,
     mem::size_of,
     usize,
@@ -73,30 +71,110 @@ struct Monitor {
     bar_y: i32,
     rect: Rect,
     client_area: Rect,
-    selected_hwnd: RwLock<Option<HWND>>,
-    clients: RwLock<Vec<Client>> // Reversed order
+    selected_hwnd: HWND,
+    clients: Vec<Client> // Reversed order
 }
 
 impl Monitor {
-    unsafe fn arrangemon(&self) -> Result<()> {
-        tile(self)?;
+    unsafe fn arrangemon(&mut self) -> Result<()> {
+        self.tile()?;
         Ok(())
     }
 
     fn get_selected_client_index(&self) -> Option<usize> {
-        let selected_hwnd_option = self.selected_hwnd.read().unwrap();
-        if selected_hwnd_option.is_none() {
+        let selected_hwnd = self.selected_hwnd;
+        if selected_hwnd.0 == 0 {
             return None;
         }
 
-        let selected_hwnd = selected_hwnd_option.unwrap();
-        let clients = self.clients.read().unwrap();
-        for (index, client) in clients.iter().enumerate() {
+        for (index, client) in self.clients.iter().enumerate() {
             if client.hwnd == selected_hwnd {
                 return Some(index);
             }
         }
         None
+    }
+
+    unsafe fn is_tiled(client: &Client) -> bool {
+        !client.is_floating
+    }
+
+    unsafe fn tile(&mut self) -> Result<()> {
+        let clients = &mut self.clients;
+
+        let mut tiled_count: u32 = 0;
+        for client in clients.iter() {
+            tiled_count += Self::is_tiled(client) as u32;
+        }
+
+        if tiled_count <= 0 {
+            return Ok(());
+        }
+
+        //let mut master_width = 0;
+        let mut master_y: u32 = 0;
+        let mut stack_y: u32 = 0;
+
+        let master_width = if tiled_count > self.master_count {
+            if self.master_count > 0 {
+                ((self.rect.width as f32) * self.master_factor) as i32
+            } else {
+                0
+            }
+        } else {
+            self.rect.width
+        };
+
+        for (index, client) in clients.iter_mut().rev().enumerate() {
+            if !Self::is_tiled(client) {
+                continue;
+            }
+
+            let is_master = index < self.master_count as usize;
+            let rect = if is_master {
+                let height: u32 = (self.client_area.height as u32 - master_y) / (min(tiled_count, self.master_count) - (index as u32));
+                Rect {
+                    x: self.client_area.x,
+                    y: self.client_area.y + master_y as i32,
+                    width: master_width,
+                    height: height as i32
+                }
+            } else {
+                let height: u32 = (self.client_area.height as u32 - stack_y) / (tiled_count - (index as u32));
+                Rect {
+                    x: self.client_area.x + master_width as i32,
+                    y: self.client_area.y + stack_y as i32,
+                    width: self.client_area.width - master_width,
+                    height: height as i32
+                }
+            };
+
+            ShowWindow(client.hwnd, SW_NORMAL);
+            SetWindowPos(
+                client.hwnd,
+                None,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                SET_WINDOW_POS_FLAGS(0)
+            )?;
+
+            client.rect = rect.clone();
+
+            let next_y = (is_master as u32) * master_y + (!is_master as u32) * stack_y + rect.height as u32;
+            if next_y >= self.client_area.height as u32 {
+                continue;
+            }
+
+            if is_master  {
+                master_y += rect.height as u32;
+            } else{
+                stack_y += rect.height as u32;
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -109,19 +187,10 @@ pub union Arg {
 pub struct Key {
     pub mod_key: HOT_KEY_MODIFIERS,
     pub key: char,
-    pub func: unsafe fn(&Option<Arg>)->Result<()>,
+    pub func: unsafe fn(&mut DwmrApp, &Option<Arg>)->Result<()>,
     pub arg: Option<Arg>
 }
 
-
-pub unsafe fn arrange() -> Result<()> {
-    let monitors = DWMR_APP.monitors.read().unwrap();
-    for monitor in monitors.iter() {
-        monitor.arrangemon()?;
-    }
-
-    Ok(())
-}
 
 #[derive(Default, Clone, Debug)]
 struct Client {
@@ -140,19 +209,18 @@ struct Client {
     is_fixed: bool,
     is_urgent: bool,
     is_cloaked: bool,
-    monitor: std::sync::Weak<Monitor>,
+    monitor: usize,
 }
 
 #[derive(Default, Debug)]
-struct DwmrApp {
-    hwnd: RwLock<Option<HWND>>,
-    wallpaper_hwnd: RwLock<Option<HWND>>,
-    monitors: RwLock<Vec<Arc<Monitor>>>,
-    selected_monitor: RwLock<std::sync::Weak<Monitor>>,
+pub struct DwmrApp {
+    hwnd: HWND,
+    wallpaper_hwnd: HWND,
+    monitors: Vec<Monitor>,
+    selected_monitor_index: Option<usize>,
 }
 
 lazy_static! {
-    static ref DWMR_APP: DwmrApp = DwmrApp::default();
     static ref DISALLOWED_TITLE: HashSet<String> = HashSet::from([
         "Windows Shell Experience Host".to_string(),
         "Microsoft Text Input Application".to_string(),
@@ -179,586 +247,517 @@ lazy_static! {
 
 }
 
-unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
-{
-    match msg {
-        WM_CREATE => {
-            LRESULT::default()
-        }
-        WM_CLOSE => {
-            cleanup().unwrap();
-            LRESULT::default()
-        }
-        WM_DESTROY => {
-            PostQuitMessage(0);
-            LRESULT::default()
-        }
-        WM_HOTKEY => {
-            if wparam.0 < KEYS.len(){
-                let key = &KEYS[wparam.0];
-                (key.func)(&key.arg).unwrap();
-            }
-            LRESULT::default()
-        }
-        _ => DefWindowProcW(hwnd, msg, wparam, lparam)
-    }
-}
+impl DwmrApp {
+    pub unsafe fn setup(&mut self, hinstance: &HINSTANCE) -> Result<()> {
+        self.request_update_geom()?;
 
-unsafe extern "system" fn update_geom(hmonitor: HMONITOR, _: HDC, rect: *mut RECT, _: LPARAM) -> BOOL {
-    let mut monitor_info = MONITORINFOEXW{
-        monitorInfo: MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFOEXW>() as u32,
+        let wallpaper_hwnd = FindWindowW(W_WALLPAPER_CLASS_NAME, None);
+        if wallpaper_hwnd.0 == 0 {
+            GetLastError()?;
+        }
+
+        self.wallpaper_hwnd = wallpaper_hwnd;
+
+        let wnd_class = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            lpfnWndProc: Some(Self::wnd_proc),
+            hInstance: *hinstance,
+            lpszClassName: W_APP_NAME.clone(),
             ..Default::default()
-        },
-        ..Default::default()
-    };
-    if GetMonitorInfoW(hmonitor, &mut monitor_info.monitorInfo) == FALSE {
-        return TRUE;
+        };
+
+        let class_atom = RegisterClassExW(&wnd_class);
+        if class_atom == 0{
+            GetLastError()?;
+        }
+
+        let hwnd_result = CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            W_APP_NAME.clone(),
+            W_APP_NAME.clone(),
+            WINDOW_STYLE::default(),
+            0,
+            0,
+            0,
+            0,
+            HWND_MESSAGE,
+            None,
+            None,
+            Some(self as *mut _ as _)
+        );
+
+        if hwnd_result.0 == 0 {
+            GetLastError()?;
+        }
+
+        self.grab_keys()?;
+        Ok(())
     }
 
-    //unsigned shot to str
-    let _monitor_name = PCWSTR::from_raw(monitor_info.szDevice.as_ptr()).to_string().unwrap();
 
-    let monitor = Arc::new(Monitor{
-        name: monitor_info.szDevice,
-        index: DWMR_APP.monitors.read().unwrap().len(),
-        rect: Rect::from_win_rect(&monitor_info.monitorInfo.rcMonitor),
-        client_area: Rect::from_win_rect(&monitor_info.monitorInfo.rcWork),
-        master_count: 1,
-        master_factor: 0.5,
-        ..Default::default()
-    });
-
-    DWMR_APP.monitors.write().unwrap().push(monitor);
-    TRUE
-}
-
-unsafe fn grab_keys() -> Result<()> {
-    let hwnd_option = DWMR_APP.hwnd.read().unwrap();
-
-    if hwnd_option.is_none() {
-        return Ok(());
-    }
-
-    let hwnd = hwnd_option.unwrap();
-
-    for (index, key) in KEYS.iter().enumerate() {
-        RegisterHotKey(hwnd, index as i32, key.mod_key, key.key as u32)?;
-    }
-    Ok(())
-}
-
-unsafe fn request_update_geom() -> Result<()> {
-    let monitors = GetSystemMetrics(SM_CMONITORS) as usize;
-    DWMR_APP.monitors.write().unwrap().reserve(monitors);
-
-
-    if EnumDisplayMonitors(None, None, Some(update_geom), None) == FALSE {
-        return Ok(());
-    }
-    Ok(())
-}
-
-unsafe fn is_cloaked(hwnd: &HWND) -> Result<bool> {
-    let mut cloaked_val = 0;
-    DwmGetWindowAttribute(*hwnd, DWMWA_CLOAKED, (&mut cloaked_val) as *const _ as *mut _, size_of::<u32>() as u32)?;
-    let is_cloaked = cloaked_val > 0;
-
-    Ok(is_cloaked)
-}
-
-pub unsafe fn is_manageable(hwnd: &HWND) -> Result<bool>
-{
-    let style = GetWindowLongW(*hwnd, GWL_STYLE) as u32;
-    if has_flag!(style, WS_DISABLED.0) {
-        return Ok(false);
-    }
-
-    let exstyle = GetWindowLongW(*hwnd, GWL_EXSTYLE) as u32;
-    if has_flag!(exstyle, WS_EX_NOACTIVATE.0) {
-        return Ok(false);
-    }
-
-    SetLastError(WIN32_ERROR(0));
-    let name_length = GetWindowTextLengthW(*hwnd);
-    if name_length == 0 {
-        GetLastError()?;
-        return Ok(false);
-    }
-
-    if is_cloaked(hwnd)? {
-        return Ok(false);
-    }
-
-    let mut client_name_buf = [0u16; 256];
-    SetLastError(WIN32_ERROR(0));
-    if GetWindowTextW(*hwnd, client_name_buf.as_mut()) == 0 {
-        GetLastError()?;
-    }
-    let client_name = PCWSTR::from_raw(client_name_buf.as_ptr()).to_string().unwrap();
-    if DISALLOWED_TITLE.contains(&client_name) {
-        return Ok(false);
-    }
-
-    let mut class_name_buf = [0u16; 256];
-    SetLastError(WIN32_ERROR(0));
-    if GetClassNameW(*hwnd, class_name_buf.as_mut()) == 0 {
-        GetLastError()?;
-    }
-    let class_name = PCWSTR::from_raw(class_name_buf.as_ptr()).to_string().unwrap();
-    if DISALLOWED_CLASS.contains(&class_name) {
-        return Ok(false);
-    }
-
-    let parent = GetParent(*hwnd);
-    let parent_exist = parent.0 != 0;
-    let is_tool = has_flag!(exstyle, WS_EX_TOOLWINDOW.0);
-
-    if !parent_exist {
-        if is_tool {
-            return Ok(false);
-        } else {
-            let result = IsWindowVisible(*hwnd) == TRUE;
-            return Ok(result);
+    unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
+    {
+        match msg {
+            WM_CREATE => {
+                let create_struct = lparam.0 as *const CREATESTRUCTW;
+                let this = (*create_struct).lpCreateParams as *mut Self;
+                (*this).hwnd = hwnd;
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, this as isize);
+                LRESULT::default()
+            }
+            _ => {
+                let this = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Self;
+                match this.is_null() {
+                    true => DefWindowProcW(hwnd, msg, wparam, lparam),
+                    false => (*this).handle_message(hwnd, msg, wparam, lparam)
+                }
+            }
         }
     }
 
-    if is_manageable(&parent)? == false {
-        return Ok(false);
-    }
-
-    let is_app = has_flag!(exstyle, WS_EX_APPWINDOW.0);
-    if is_tool || is_app {
-        return Ok(true);
-    }
-
-    Ok(false)
-}
-
-unsafe fn get_root(hwnd: &HWND) -> Result<HWND> {
-    let desktop_window = GetDesktopWindow();
-    let mut current = hwnd.clone();
-    let mut parent = GetWindow(current, GW_OWNER);
-
-    while (parent.0 != 0) && (parent != desktop_window) {
-        current = parent;
-        parent = GetWindow(current, GW_OWNER);
-    }
-
-    Ok(current)
-}
-
-unsafe fn manage(hwnd: &HWND) -> Result<Client> {
-    let mut window_info = WINDOWINFO {
-        cbSize: size_of::<WINDOWINFO>() as u32,
-        ..Default::default()
-    };
-
-    GetWindowInfo(*hwnd, &mut window_info)?;
-
-    let parent = GetParent(*hwnd);
-    let root = get_root(hwnd)?;
-    let is_cloaked = is_cloaked(hwnd)?;
-    let is_minimized = IsIconic(*hwnd) == TRUE;
-    let rect = Rect::from_win_rect(&window_info.rcWindow);
-    let center_x = rect.x + rect.width / 2;
-    let center_y = rect.y + rect.height / 2;
-
-    let monitors = DWMR_APP.monitors.read().unwrap();
-    assert!(!monitors.is_empty());
-
-    let mut monitor_index:usize = 0;
-    for (index, monitor_iter) in monitors.iter().enumerate() {
-        let monitor_rect = &monitor_iter.as_ref().rect;
-
-        let left_check = monitor_rect.x <= center_x;
-        let right_check = center_x <= monitor_rect.x + monitor_rect.width;
-        let top_check = monitor_rect.y <= center_y;
-        let bottom_check = center_y <= monitor_rect.y + monitor_rect.height;
-
-        if left_check && right_check && top_check && bottom_check {
-            monitor_index = index;
+    unsafe fn handle_message(&mut self, hwnd:HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
+    {
+        match msg {
+            WM_CLOSE => {
+                self.cleanup().unwrap();
+                LRESULT::default()
+            }
+            WM_DESTROY => {
+                PostQuitMessage(0);
+                LRESULT::default()
+            }
+            WM_HOTKEY => {
+                if wparam.0 < KEYS.len(){
+                    let key = &KEYS[wparam.0];
+                    (key.func)(self, &key.arg).unwrap();
+                }
+                LRESULT::default()
+            }
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam)
         }
     }
 
-    let monitor = &monitors[monitor_index];
-    let client = Client {
-        hwnd: *hwnd,
-        parent,
-        root,
-        rect: rect.into(),
-        bw: 0,
-        is_minimized,
-        is_cloaked,
-        monitor: Arc::downgrade(monitor),
-        ..Default::default()
-    };
+    unsafe fn request_update_geom(&mut self) -> Result<()> {
+        let monitors = GetSystemMetrics(SM_CMONITORS) as usize;
+        self.monitors.reserve(monitors);
 
-    monitor.clients.write().unwrap().push(client.clone());
-    Ok(client)
-}
+        let lparam = LPARAM(self as *mut _ as isize);
+        if EnumDisplayMonitors(None, None, Some(Self::update_geom), lparam) == FALSE {
+            return Ok(());
+        }
+        Ok(())
+    }
 
-pub unsafe fn scan() -> Result<()> {
-    EnumWindows(Some(scan_enum), None)?;
+    unsafe fn grab_keys(&self) -> Result<()> {
+        if self.hwnd.0 == 0 {
+            return Ok(());
+        }
 
-    let focus_hwnd = GetForegroundWindow();
-    let mut selected_client: Option<Client> = None;
-    let mut selected_index: Option<usize> = None;
-    for monitor in DWMR_APP.monitors.write().unwrap().iter() {
-        let mut clients = monitor.clients.write().unwrap();
-        for (index, client) in clients.iter().enumerate() {
-            if client.hwnd != focus_hwnd {
+        for (index, key) in KEYS.iter().enumerate() {
+            RegisterHotKey(self.hwnd, index as i32, key.mod_key, key.key as u32)?;
+        }
+        Ok(())
+    }
+
+    unsafe extern "system" fn update_geom(hmonitor: HMONITOR, _: HDC, rect: *mut RECT, lparam: LPARAM) -> BOOL {
+        let mut monitor_info = MONITORINFOEXW{
+            monitorInfo: MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFOEXW>() as u32,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        if GetMonitorInfoW(hmonitor, &mut monitor_info.monitorInfo) == FALSE {
+            return TRUE;
+        }
+
+        let _monitor_name = PCWSTR::from_raw(monitor_info.szDevice.as_ptr()).to_string().unwrap();
+
+        let this = lparam.0 as *mut DwmrApp;
+
+        let monitor = Monitor{
+            name: monitor_info.szDevice,
+            index: (*this).monitors.len(),
+            rect: Rect::from_win_rect(&monitor_info.monitorInfo.rcMonitor),
+            client_area: Rect::from_win_rect(&monitor_info.monitorInfo.rcWork),
+            master_count: 1,
+            master_factor: 0.5,
+            ..Default::default()
+        };
+
+        (*this).monitors.push(monitor);
+        TRUE
+    }
+
+    pub unsafe fn scan(&mut self) -> Result<()> {
+        EnumWindows(Some(Self::scan_enum), LPARAM(self as *mut _ as isize))?;
+
+        let focus_hwnd = GetForegroundWindow();
+        let mut selected_client: Option<Client> = None;
+        let mut selected_index: Option<usize> = None;
+        for monitor in self.monitors.iter_mut() {
+            for (index, client) in monitor.clients.iter().enumerate() {
+                if client.hwnd != focus_hwnd {
+                    continue;
+                }
+
+                self.selected_monitor_index = Some(index);
+                monitor.selected_hwnd = focus_hwnd;
+                selected_client = Some(client.clone());
+                selected_index = Some(index);
+                break;
+            }
+
+            if selected_index.is_none() {
                 continue;
             }
 
-            *DWMR_APP.selected_monitor.write().unwrap() = Arc::downgrade(monitor);
-            *monitor.selected_hwnd.write().unwrap() = Some(focus_hwnd);
-            selected_client = Some(client.clone());
-            selected_index = Some(index);
+            monitor.clients.remove(selected_index.unwrap());
+            monitor.clients.push(selected_client.clone().unwrap());
             break;
         }
+        Ok(())
+    }
 
-        if selected_index.is_none() {
-            continue;
+    unsafe extern "system" fn scan_enum(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        if !Self::is_manageable(&hwnd).unwrap() {
+            return TRUE;
         }
 
-        clients.remove(selected_index.unwrap());
-        clients.push(selected_client.clone().unwrap());
-        break;
-    }
-    Ok(())
-}
+        let this = lparam.0 as *mut Self;
+        if this.is_null() {
+            return TRUE;
+        }
 
-unsafe extern "system" fn scan_enum(hwnd: HWND, _: LPARAM) -> BOOL {
-    if !is_manageable(&hwnd).unwrap() {
-        return TRUE;
-    }
-    let _ = manage(&hwnd);
-    TRUE
-}
-
-pub unsafe fn setup(hinstance: &HINSTANCE) -> Result<()> {
-    request_update_geom()?;
-
-    let wallpaper_hwnd = FindWindowW(W_WALLPAPER_CLASS_NAME, None);
-    if wallpaper_hwnd.0 == 0 {
-        GetLastError()?;
+        (*this).manage(&hwnd).unwrap();
+        TRUE
     }
 
+    unsafe fn is_cloaked(hwnd: &HWND) -> Result<bool> {
+        let mut cloaked_val = 0;
+        DwmGetWindowAttribute(*hwnd, DWMWA_CLOAKED, (&mut cloaked_val) as *const _ as *mut _, size_of::<u32>() as u32)?;
+        let is_cloaked = cloaked_val > 0;
+
+        Ok(is_cloaked)
+    }
+
+    unsafe fn is_manageable(hwnd: &HWND) -> Result<bool>
     {
-        *DWMR_APP.wallpaper_hwnd.write().unwrap() = Some(wallpaper_hwnd);
-    }
-
-    let wnd_class = WNDCLASSEXW {
-        cbSize: size_of::<WNDCLASSEXW>() as u32,
-        lpfnWndProc: Some(wnd_proc),
-        hInstance: *hinstance,
-        lpszClassName: W_APP_NAME.clone(),
-        ..Default::default()
-    };
-
-    let class_atom = RegisterClassExW(&wnd_class);
-    if class_atom == 0{
-        GetLastError()?;
-    }
-
-    let hwnd_result = CreateWindowExW(
-        WINDOW_EX_STYLE::default(),
-        W_APP_NAME.clone(),
-        W_APP_NAME.clone(),
-        WINDOW_STYLE::default(),
-        0,
-        0,
-        0,
-        0,
-        HWND_MESSAGE,
-        None,
-        None,
-        None,
-    );
-
-    if hwnd_result.0 == 0 {
-        GetLastError()?;
-    }
-
-    {
-        let mut hwnd = DWMR_APP.hwnd.write().unwrap();
-        *hwnd = Some(hwnd_result);
-    }
-
-    grab_keys()?;
-    Ok(())
-}
-
-unsafe fn is_tiled(client: &Client) -> bool {
-    !client.is_floating
-}
-
-unsafe fn tile(monitor: &Monitor) -> Result<()> {
-    let mut clients = monitor.clients.write().unwrap();
-
-    let mut tiled_count: u32 = 0;
-    for client in clients.iter() {
-        tiled_count += is_tiled(client) as u32;
-    }
-
-    if tiled_count <= 0 {
-        return Ok(());
-    }
-
-    //let mut master_width = 0;
-    let mut master_y: u32 = 0;
-    let mut stack_y: u32 = 0;
-
-    let master_width = if tiled_count > monitor.master_count {
-        if monitor.master_count > 0 {
-            ((monitor.rect.width as f32) * monitor.master_factor) as i32
-        } else {
-            0
-        }
-    } else {
-        monitor.rect.width
-    };
-
-    for (index, client) in clients.iter_mut().rev().enumerate() {
-        if !is_tiled(client) {
-            continue;
+        let style = GetWindowLongW(*hwnd, GWL_STYLE) as u32;
+        if has_flag!(style, WS_DISABLED.0) {
+            return Ok(false);
         }
 
-        let is_master = index < monitor.master_count as usize;
-        let rect = if is_master {
-            let height: u32 = (monitor.client_area.height as u32 - master_y) / (min(tiled_count, monitor.master_count) - (index as u32));
-            Rect {
-                x: monitor.client_area.x,
-                y: monitor.client_area.y + master_y as i32,
-                width: master_width,
-                height: height as i32
+        let exstyle = GetWindowLongW(*hwnd, GWL_EXSTYLE) as u32;
+        if has_flag!(exstyle, WS_EX_NOACTIVATE.0) {
+            return Ok(false);
+        }
+
+        SetLastError(WIN32_ERROR(0));
+        let name_length = GetWindowTextLengthW(*hwnd);
+        if name_length == 0 {
+            GetLastError()?;
+            return Ok(false);
+        }
+
+        if Self::is_cloaked(hwnd)? {
+            return Ok(false);
+        }
+
+        let mut client_name_buf = [0u16; 256];
+        SetLastError(WIN32_ERROR(0));
+        if GetWindowTextW(*hwnd, client_name_buf.as_mut()) == 0 {
+            GetLastError()?;
+        }
+        let client_name = PCWSTR::from_raw(client_name_buf.as_ptr()).to_string().unwrap();
+        if DISALLOWED_TITLE.contains(&client_name) {
+            return Ok(false);
+        }
+
+        let mut class_name_buf = [0u16; 256];
+        SetLastError(WIN32_ERROR(0));
+        if GetClassNameW(*hwnd, class_name_buf.as_mut()) == 0 {
+            GetLastError()?;
+        }
+        let class_name = PCWSTR::from_raw(class_name_buf.as_ptr()).to_string().unwrap();
+        if DISALLOWED_CLASS.contains(&class_name) {
+            return Ok(false);
+        }
+
+        let parent = GetParent(*hwnd);
+        let parent_exist = parent.0 != 0;
+        let is_tool = has_flag!(exstyle, WS_EX_TOOLWINDOW.0);
+
+        if !parent_exist {
+            if is_tool {
+                return Ok(false);
+            } else {
+                let result = IsWindowVisible(*hwnd) == TRUE;
+                return Ok(result);
             }
-        } else {
-            let height: u32 = (monitor.client_area.height as u32 - stack_y) / (tiled_count - (index as u32));
-            Rect {
-                x: monitor.client_area.x + master_width as i32,
-                y: monitor.client_area.y + stack_y as i32,
-                width: monitor.client_area.width - master_width,
-                height: height as i32
-            }
+        }
+
+        if Self::is_manageable(&parent)? == false {
+            return Ok(false);
+        }
+
+        let is_app = has_flag!(exstyle, WS_EX_APPWINDOW.0);
+        if is_tool || is_app {
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    unsafe fn get_root(hwnd: &HWND) -> Result<HWND> {
+        let desktop_window = GetDesktopWindow();
+        let mut current = hwnd.clone();
+        let mut parent = GetWindow(current, GW_OWNER);
+
+        while (parent.0 != 0) && (parent != desktop_window) {
+            current = parent;
+            parent = GetWindow(current, GW_OWNER);
+        }
+
+        Ok(current)
+    }
+
+    unsafe fn manage(&mut self, hwnd: &HWND) -> Result<Client> {
+        let mut window_info = WINDOWINFO {
+            cbSize: size_of::<WINDOWINFO>() as u32,
+            ..Default::default()
         };
 
-        ShowWindow(client.hwnd, SW_NORMAL);
-        SetWindowPos(
-            client.hwnd,
-            None,
-            rect.x,
-            rect.y,
-            rect.width,
-            rect.height,
-            SET_WINDOW_POS_FLAGS(0)
-        )?;
+        GetWindowInfo(*hwnd, &mut window_info)?;
 
-        client.rect = rect.clone();
+        let parent = GetParent(*hwnd);
+        let root = Self::get_root(hwnd)?;
+        let is_cloaked = Self::is_cloaked(hwnd)?;
+        let is_minimized = IsIconic(*hwnd) == TRUE;
+        let rect = Rect::from_win_rect(&window_info.rcWindow);
+        let center_x = rect.x + rect.width / 2;
+        let center_y = rect.y + rect.height / 2;
 
-        let next_y = (is_master as u32) * master_y + (!is_master as u32) * stack_y + rect.height as u32;
-        if next_y >= monitor.client_area.height as u32 {
-            continue;
-        }
+        assert!(!self.monitors.is_empty());
 
-        if is_master  {
-            master_y += rect.height as u32;
-        } else{
-            stack_y += rect.height as u32;
-        }
-    }
+        let mut monitor_index:usize = 0;
+        for (index, monitor_iter) in self.monitors.iter().enumerate() {
+            let monitor_rect = &monitor_iter.rect;
 
-    Ok(())
-}
+            let left_check = monitor_rect.x <= center_x;
+            let right_check = center_x <= monitor_rect.x + monitor_rect.width;
+            let top_check = monitor_rect.y <= center_y;
+            let bottom_check = center_y <= monitor_rect.y + monitor_rect.height;
 
-fn offset_to_new_index(length: usize, current_index: usize, offset_index: i32) -> usize {
-    let is_underfloor = (current_index as i32 - offset_index) < 0;
-    let is_overfloor = (current_index as i32 - offset_index) >= (length as i32);
-
-    match (is_underfloor, is_overfloor) {
-        (true, false) => (length - 1) as usize,
-        (false, true) => 0 as usize,
-        _ => (current_index as i32 - offset_index) as usize
-    }
-}
-
-unsafe fn focus(hwnd: &HWND) -> Result<()> {
-    let result = SetForegroundWindow(*hwnd);
-    if result.0 == 0 {
-        GetLastError()?;
-    }
-    Ok(())
-}
-
-unsafe fn unfocus() -> Result<()> {
-    let desktop_hwnd = FindWindowW(W_WALLPAPER_CLASS_NAME, None);
-    if desktop_hwnd.0 == 0 {
-        GetLastError()?;
-    }
-
-    let result = SetForegroundWindow(desktop_hwnd);
-    if result.0 == 0 {
-        GetLastError()?;
-    }
-
-    Ok(())
-}
-
-unsafe fn refresh_focus() -> Result<()> {
-    let selected_monitor_weak = DWMR_APP.selected_monitor.read().unwrap();
-    if selected_monitor_weak.upgrade().is_none() {
-        return Ok(());
-    }
-
-    let selected_monitor = selected_monitor_weak.upgrade().unwrap();
-    if selected_monitor.clients.read().unwrap().len() == 0 {
-        unfocus()?;
-        return Ok(());
-    }
-
-    let selected_client_option = selected_monitor.get_selected_client_index();
-    if selected_client_option.is_none() {
-        unfocus()?;
-        return Ok(());
-    }
-
-    let selected_monitor_clients = selected_monitor.clients.read().unwrap();
-    let selected_client_hwnd = &selected_monitor_clients[selected_client_option.unwrap()].hwnd;
-    focus(selected_client_hwnd)?;
-
-    Ok(())
-}
-
-unsafe fn focus_monitor(offset_index: i32) -> Result<()>
-{
-    let monitors = DWMR_APP.monitors.read().unwrap();
-    if monitors.len() == 0 {
-        return Ok(());
-    }
-
-    {
-        let mut selected_monitor = DWMR_APP.selected_monitor.write().unwrap();
-        if selected_monitor.upgrade().is_none() {
-            *selected_monitor = Arc::downgrade(&monitors[0]);
-        } else {
-            let current_selected_index = selected_monitor.upgrade().unwrap().index;
-            let new_index = offset_to_new_index(monitors.len(), current_selected_index, offset_index);
-            if new_index == current_selected_index {
-                return Ok(());
+            if left_check && right_check && top_check && bottom_check {
+                monitor_index = index;
             }
-
-            *selected_monitor = Arc::downgrade(&monitors[new_index]);
         }
-        let selected_monitor_arc = selected_monitor.upgrade().unwrap();
-        let mut selected_hwnd = selected_monitor_arc.selected_hwnd.write().unwrap();
-        if selected_hwnd.is_none() {
-            let clients = selected_monitor_arc.clients.read().unwrap();
-            *selected_hwnd = match clients.last() {
-                Some(client) => Some(client.hwnd),
-                None => None
-            };
+
+        let client = Client {
+            hwnd: *hwnd,
+            parent,
+            root,
+            rect: rect.into(),
+            bw: 0,
+            is_minimized,
+            is_cloaked,
+            monitor: monitor_index,
+            ..Default::default()
+        };
+        self.monitors[monitor_index].clients.push(client.clone());
+
+        Ok(client)
+    }
+
+    pub unsafe fn arrange(&mut self) -> Result<()> {
+        for monitor in self.monitors.iter_mut() {
+            monitor.arrangemon()?;
         }
+
+        Ok(())
     }
 
-    refresh_focus()?;
-
-    Ok(())
-}
-
-unsafe fn focus_stack(offset_index: i32) -> Result<()> {
-    let selected_monitor_option = DWMR_APP.selected_monitor.read().unwrap().upgrade();
-    if selected_monitor_option.is_none() {
-        return Ok(());
-    }
-
-    let selected_monitor = selected_monitor_option.unwrap();
-    let selected_client_index_option = selected_monitor.get_selected_client_index();
-
-    if selected_client_index_option.is_none() {
-        return Ok(());
-    }
-
-    let selected_client_index = selected_client_index_option.unwrap();
-    let clients = selected_monitor.clients.read().unwrap();
-    let clients_count = clients.len();
-    if clients_count == 0 {
-        return Ok(());
-    }
-
-    let new_focus_index = offset_to_new_index(clients_count, selected_client_index, offset_index);
-    if new_focus_index == selected_client_index {
-        return Ok(());
-    }
-
-    let new_focus_hwnd = clients[new_focus_index].hwnd;
-    *selected_monitor.selected_hwnd.write().unwrap() = Some(new_focus_hwnd);
-    focus(&new_focus_hwnd)?;
-    Ok(())
-}
-
-pub unsafe fn zoom(_: &Arg) -> Result<()> {
-    let selected_monitor_arc_option = DWMR_APP.selected_monitor.read().unwrap().upgrade();
-    if selected_monitor_arc_option.is_none() {
-        return Ok(());
-    }
-
-    let selected_monitor_arc = selected_monitor_arc_option.unwrap();
-    let selected_client_index_option = selected_monitor_arc.get_selected_client_index();
-
-    if selected_client_index_option.is_none() {
-        return Ok(());
-    }
-
-    let selected_client_idnex = selected_client_index_option.unwrap();
-
-    {
-        let mut clients = selected_monitor_arc.clients.write().unwrap();
-        let selected_client = clients[selected_client_idnex].clone();
-        clients.remove(selected_client_idnex);
-        clients.push(selected_client);
-    }
-
-    selected_monitor_arc.arrangemon()?;
-
-    Ok(())
-}
-
-pub unsafe fn quit(_: &Option<Arg>) -> Result<()> {
-    let hwnd_option = DWMR_APP.hwnd.read().unwrap();
-    if hwnd_option.is_none() {
-        return Ok(());
-    }
-
-    let hwnd = hwnd_option.unwrap();
-    PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0))?;
-    Ok(())
-}
-
-pub unsafe fn cleanup() -> Result<()> {
-    {
-        let mut hwnd = DWMR_APP.hwnd.write().unwrap();
-
-        if hwnd.is_none() {
+    pub unsafe fn cleanup(&mut self) -> Result<()> {
+        if self.hwnd.0 == 0 {
             return Ok(());
         }
 
         for key_index in 0..KEYS.len() {
-            UnregisterHotKey(hwnd.unwrap(), key_index as i32)?;
+            UnregisterHotKey(self.hwnd, key_index as i32)?;
         }
 
-        DestroyWindow((*hwnd).unwrap())?;
-        *hwnd = None;
+        DestroyWindow(self.hwnd)?;
+        self.hwnd = HWND::default();
+
+        Ok(())
     }
 
-    Ok(())
+    pub unsafe fn run() -> Result<()> {
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0) == TRUE {
+            TranslateMessage(&mut msg);
+            DispatchMessageW(&mut msg);
+        }
+        Ok(())
+    }
+
+    pub unsafe fn quit(&mut self, _: &Option<Arg>) -> Result<()> {
+        if self.hwnd.0 == 0 {
+            return Ok(());
+        }
+
+        PostMessageW(self.hwnd, WM_CLOSE, WPARAM(0), LPARAM(0))?;
+        Ok(())
+    }
+
+    fn offset_to_new_index(length: usize, current_index: usize, offset_index: i32) -> usize {
+        let is_underfloor = (current_index as i32 - offset_index) < 0;
+        let is_overfloor = (current_index as i32 - offset_index) >= (length as i32);
+
+        match (is_underfloor, is_overfloor) {
+            (true, false) => (length - 1) as usize,
+            (false, true) => 0 as usize,
+            _ => (current_index as i32 - offset_index) as usize
+        }
+    }
+
+    unsafe fn focus(hwnd: &HWND) -> Result<()> {
+        let result = SetForegroundWindow(*hwnd);
+        if result.0 == 0 {
+            GetLastError()?;
+        }
+        Ok(())
+    }
+
+    pub unsafe fn focus_stack(&mut self, arg: &Option<Arg>) -> Result<()> {
+        if arg.is_none() {
+            return Ok(());
+        }
+
+        let offset = arg.as_ref().unwrap().i;
+
+        if offset == 0 {
+            return Ok(());
+        }
+
+        let selected_monitor = self.monitors.get_mut(self.selected_monitor_index.unwrap()).unwrap();
+        let selected_client_index_option = selected_monitor.get_selected_client_index();
+
+        if selected_client_index_option.is_none() {
+            return Ok(());
+        }
+
+        let selected_client_index = selected_client_index_option.unwrap();
+        let clients_count = selected_monitor.clients.len();
+        if clients_count == 0 {
+            return Ok(());
+        }
+
+        let new_focus_index = Self::offset_to_new_index(clients_count, selected_client_index, offset);
+        if new_focus_index == selected_client_index {
+            return Ok(());
+        }
+
+        let new_focus_hwnd = selected_monitor.clients[new_focus_index].hwnd;
+        selected_monitor.selected_hwnd = new_focus_hwnd;
+        Self::focus(&new_focus_hwnd)?;
+        Ok(())
+    }
+
+    pub unsafe fn zoom(&mut self, _: &Option<Arg>) -> Result<()> {
+        let selected_monitor = self.monitors.get_mut(self.selected_monitor_index.unwrap()).unwrap();
+        let selected_client_index_option = selected_monitor.get_selected_client_index();
+
+        if selected_client_index_option.is_none() {
+            return Ok(());
+        }
+
+        let selected_client_idnex = selected_client_index_option.unwrap();
+
+        let clients = &mut selected_monitor.clients;
+        let selected_client = clients[selected_client_idnex].clone();
+        clients.remove(selected_client_idnex);
+        clients.push(selected_client);
+
+        selected_monitor.arrangemon()?;
+
+        Ok(())
+    }
+
+    unsafe fn unfocus() -> Result<()> {
+        let desktop_hwnd = FindWindowW(W_WALLPAPER_CLASS_NAME, None);
+        if desktop_hwnd.0 == 0 {
+            GetLastError()?;
+        }
+
+        let result = SetForegroundWindow(desktop_hwnd);
+        if result.0 == 0 {
+            GetLastError()?;
+        }
+
+        Ok(())
+    }
+
+    unsafe fn refresh_focus(&self) -> Result<()> {
+        let selected_monitor = &self.monitors[self.selected_monitor_index.unwrap()];
+        if selected_monitor.clients.len() == 0 {
+            Self::unfocus()?;
+            return Ok(());
+        }
+
+        let selected_client_option = selected_monitor.get_selected_client_index();
+        if selected_client_option.is_none() {
+            Self::unfocus()?;
+            return Ok(());
+        }
+
+        let selected_client_hwnd = selected_monitor.clients[selected_client_option.unwrap()].hwnd;
+        Self::focus(&selected_client_hwnd)?;
+
+        Ok(())
+    }
+
+    pub unsafe fn focus_monitor(&mut self, arg: &Option<Arg>) -> Result<()>
+    {
+        if self.monitors.len() == 0 {
+            return Ok(());
+        }
+
+        if arg.is_none() {
+            return Ok(());
+        }
+
+        let index_offset = arg.as_ref().unwrap().i;
+
+        if index_offset == 0 {
+            return Ok(());
+        }
+
+        if self.selected_monitor_index.is_none() {
+            self.selected_monitor_index = Some(0);
+        } else {
+            let current_selected_index = self.selected_monitor_index.unwrap();
+            let new_index = Self::offset_to_new_index(self.monitors.len(), current_selected_index, index_offset);
+            if new_index == current_selected_index {
+                return Ok(());
+            }
+            self.selected_monitor_index = Some(new_index);
+        }
+
+        let selected_monitor = &mut self.monitors[self.selected_monitor_index.unwrap()];
+        let selected_hwnd = &mut selected_monitor.selected_hwnd;
+        if selected_hwnd.0 == 0 {
+            let clients = &selected_monitor.clients;
+            *selected_hwnd = match clients.last() {
+                Some(client) => client.hwnd,
+                None => HWND::default()
+            };
+        }
+
+        self.refresh_focus()?;
+
+        Ok(())
+    }
 }
 
-pub unsafe fn run() -> Result<()> {
-    let mut msg = MSG::default();
-    while GetMessageW(&mut msg, None, 0, 0) == TRUE {
-        TranslateMessage(&mut msg);
-        DispatchMessageW(&mut msg);
-    }
-    Ok(())
-}

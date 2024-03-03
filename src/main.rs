@@ -11,11 +11,11 @@ fn main() -> Result<()> {
     unsafe{
         let hmodule = GetModuleHandleW(None)?;
         let hinstance: HINSTANCE = hmodule.into();
-        setup(&hinstance)?;
-        scan()?;
-        arrange()?;
-        run()?;
-        cleanup()?; 
+        let mut app = DwmrApp::default();
+        app.setup(&hinstance)?;
+        app.scan()?;
+        app.arrange()?;
+        DwmrApp::run()?;
     }
     Ok(())
 }
