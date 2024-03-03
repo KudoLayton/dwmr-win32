@@ -7,8 +7,6 @@ use windows::{
     }
 };
 
-pub mod config;
-
 fn main() -> Result<()> {
     unsafe{
         let hmodule = GetModuleHandleW(None)?;
