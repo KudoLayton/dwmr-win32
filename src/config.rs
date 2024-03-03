@@ -1,8 +1,4 @@
 use super::*;
-use windows::{
-    core::*,
-    Win32::UI::Input::KeyboardAndMouse::*
-};
 
 pub const MOD_KEY: HOT_KEY_MODIFIERS = MOD_ALT;
 
