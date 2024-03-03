@@ -445,7 +445,9 @@ pub unsafe fn setup(hinstance: &HINSTANCE) -> Result<()> {
         GetLastError()?;
     }
 
-    *DWMR_APP.wallpaper_hwnd.write().unwrap() = Some(wallpaper_hwnd);
+    {
+        *DWMR_APP.wallpaper_hwnd.write().unwrap() = Some(wallpaper_hwnd);
+    }
 
     let wnd_class = WNDCLASSEXW {
         cbSize: size_of::<WNDCLASSEXW>() as u32,
@@ -479,8 +481,12 @@ pub unsafe fn setup(hinstance: &HINSTANCE) -> Result<()> {
         GetLastError()?;
     }
 
-    let mut hwnd = DWMR_APP.hwnd.write().unwrap();
-    *hwnd = Some(hwnd_result);
+    {
+        let mut hwnd = DWMR_APP.hwnd.write().unwrap();
+        *hwnd = Some(hwnd_result);
+    }
+
+    grab_keys()?;
     Ok(())
 }
 

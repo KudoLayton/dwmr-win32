@@ -14,6 +14,7 @@ fn main() -> Result<()> {
         setup(&hinstance)?;
         scan()?;
         arrange()?;
+        run()?;
         cleanup()?; 
     }
     Ok(())
