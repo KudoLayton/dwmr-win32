@@ -9,6 +9,7 @@ use windows::{
         UI::{
             WindowsAndMessaging::*,
             Input::KeyboardAndMouse::*,
+            Accessibility::*,
         },
         Graphics::{
             Dwm::*,
@@ -22,7 +23,6 @@ use std::{
     mem::size_of,
     usize,
     cmp::*,
-    ops::*
 };
 
 pub mod config;
@@ -222,6 +222,7 @@ pub struct DwmrApp {
     wallpaper_hwnd: HWND,
     monitors: Vec<Monitor>,
     selected_monitor_index: Option<usize>,
+    event_hook: HWINEVENTHOOK,
 }
 
 lazy_static! {
@@ -294,6 +295,8 @@ impl DwmrApp {
             GetLastError()?;
         }
 
+        self.event_hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT);
+
         self.grab_keys()?;
         Ok(())
     }
@@ -338,6 +341,22 @@ impl DwmrApp {
                 LRESULT::default()
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+    }
+
+    unsafe extern "system" fn window_event_hook_proc(
+        hwin_event_hook: HWINEVENTHOOK,
+        event: u32,
+        hwnd: HWND,
+        id_object: i32,
+        id_child: i32,
+        id_event_thread: u32,
+        dwms_event_time: u32
+            
+    ) {
+        let hwnd = FindWindowW(W_APP_NAME, None);
+        if hwnd.0 == 0 {
+            GetLastError().unwrap();
         }
     }
 
@@ -393,21 +412,17 @@ impl DwmrApp {
         TRUE
     }
 
-    pub unsafe fn scan(&mut self) -> Result<()> {
-        EnumWindows(Some(Self::scan_enum), LPARAM(self as *mut _ as isize))?;
-
+    unsafe fn refresh_current_focus(&mut self) -> Result<()> {
         let focus_hwnd = GetForegroundWindow();
-        let mut selected_client: Option<Client> = None;
         let mut selected_index: Option<usize> = None;
-        for monitor in self.monitors.iter_mut() {
+        for (monitor_index, monitor) in self.monitors.iter_mut().enumerate() {
             for (index, client) in monitor.clients.iter().enumerate() {
                 if client.hwnd != focus_hwnd {
                     continue;
                 }
 
-                self.selected_monitor_index = Some(index);
+                self.selected_monitor_index = Some(monitor_index);
                 monitor.selected_hwnd = focus_hwnd;
-                selected_client = Some(client.clone());
                 selected_index = Some(index);
                 break;
             }
@@ -416,10 +431,26 @@ impl DwmrApp {
                 continue;
             }
 
-            monitor.clients.remove(selected_index.unwrap());
-            monitor.clients.push(selected_client.clone().unwrap());
             break;
         }
+        Ok(())
+    }
+
+    pub unsafe fn scan(&mut self) -> Result<()> {
+        EnumWindows(Some(Self::scan_enum), LPARAM(self as *mut _ as isize))?;
+
+        self.refresh_current_focus()?;
+        let selected_monitor = &mut self.monitors[self.selected_monitor_index.unwrap()];
+
+        let selected_client_index = selected_monitor.get_selected_client_index();
+        if selected_client_index.is_none() {
+            return Ok(());
+        }
+
+        let selected_client = selected_monitor.clients[selected_client_index.unwrap()].clone();
+        selected_monitor.clients.remove(selected_client_index.unwrap());
+        selected_monitor.clients.push(selected_client);
+
         Ok(())
     }
 
@@ -612,6 +643,11 @@ impl DwmrApp {
     }
 
     pub unsafe fn cleanup(&mut self) -> Result<()> {
+        if self.event_hook.0 != 0 {
+            UnhookWinEvent(self.event_hook);
+            self.event_hook = HWINEVENTHOOK::default();
+        }
+
         if self.hwnd.0 == 0 {
             return Ok(());
         }
