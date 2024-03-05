@@ -354,10 +354,53 @@ impl DwmrApp {
         dwms_event_time: u32
             
     ) {
-        let hwnd = FindWindowW(W_APP_NAME, None);
-        if hwnd.0 == 0 {
+        let self_hwnd = FindWindowW(W_APP_NAME, None);
+        if self_hwnd.0 == 0 {
             GetLastError().unwrap();
         }
+        let this = GetWindowLongPtrW(self_hwnd, GWLP_USERDATA) as *mut Self;
+        if this.is_null() {
+            return;
+        }
+
+        (*this).window_event_hook(hwin_event_hook, event, hwnd, id_object, id_child, id_event_thread, dwms_event_time);
+    }
+
+    unsafe fn window_event_hook (
+        &mut self,
+        hwin_event_hook: HWINEVENTHOOK,
+        event: u32,
+        hwnd: HWND,
+        id_object: i32,
+        id_child: i32,
+        id_event_thread: u32,
+        dwms_event_time: u32
+    ) {
+        match event {
+            EVENT_SYSTEM_FOREGROUND => {
+                self.set_focus(hwnd);
+            }
+            _ => ()
+        }
+    }
+
+    unsafe fn set_focus(&mut self, hwnd: HWND)
+    {
+        if let Some(selected_monitor_index) = self.selected_monitor_index {
+            if hwnd == self.monitors[selected_monitor_index].selected_hwnd {
+                return;
+            }
+        }
+
+        for monitor in self.monitors.iter_mut() {
+            for client in &monitor.clients {
+                if client.hwnd == hwnd {
+                    self.selected_monitor_index = Some(monitor.index);
+                    monitor.selected_hwnd = hwnd;
+                    return;
+                }
+            }
+        } 
     }
 
     unsafe fn request_update_geom(&mut self) -> Result<()> {
