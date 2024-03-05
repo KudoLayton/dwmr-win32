@@ -222,7 +222,7 @@ pub struct DwmrApp {
     wallpaper_hwnd: HWND,
     monitors: Vec<Monitor>,
     selected_monitor_index: Option<usize>,
-    event_hook: HWINEVENTHOOK,
+    event_hook: Vec<HWINEVENTHOOK>,
 }
 
 lazy_static! {
@@ -295,7 +295,9 @@ impl DwmrApp {
             GetLastError()?;
         }
 
-        self.event_hook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT);
+        self.event_hook.push(SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
+        self.event_hook.push(SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
+        self.event_hook.push(SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_DESTROY, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
 
         self.grab_keys()?;
         Ok(())
@@ -379,6 +381,16 @@ impl DwmrApp {
         match event {
             EVENT_SYSTEM_FOREGROUND => {
                 self.set_focus(hwnd);
+            }
+            EVENT_OBJECT_SHOW => {
+                if !Self::is_manageable(&hwnd).unwrap() {
+                    return;
+                }
+                let client = self.manage(&hwnd).unwrap();
+                self.monitors[client.monitor].arrangemon().unwrap();
+            }
+            EVENT_OBJECT_DESTROY => {
+                self.unmanage(hwnd).unwrap();
             }
             _ => ()
         }
@@ -677,6 +689,26 @@ impl DwmrApp {
         Ok(client)
     }
 
+    unsafe fn unmanage(&mut self, hwnd: HWND) -> Result<()> {
+        for monitor in self.monitors.iter_mut() {
+            let mut found_index: Option<usize> = None;
+            for (index, client) in monitor.clients.iter().enumerate() {
+                if client.hwnd == hwnd {
+                    found_index = Some(index);
+                    break;
+                }
+            }
+
+            if let Some(index) = found_index {
+                monitor.clients.remove(index);
+                monitor.arrangemon()?;
+                return Ok(());
+            }
+        }
+
+        Ok(())
+    }
+
     pub unsafe fn arrange(&mut self) -> Result<()> {
         for monitor in self.monitors.iter_mut() {
             monitor.arrangemon()?;
@@ -686,10 +718,12 @@ impl DwmrApp {
     }
 
     pub unsafe fn cleanup(&mut self) -> Result<()> {
-        if self.event_hook.0 != 0 {
-            UnhookWinEvent(self.event_hook);
-            self.event_hook = HWINEVENTHOOK::default();
+        for event_hook in self.event_hook.iter() {
+            if event_hook.0 != 0 {
+                UnhookWinEvent(*event_hook);
+            }
         }
+        self.event_hook.clear();
 
         if self.hwnd.0 == 0 {
             return Ok(());
