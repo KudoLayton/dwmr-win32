@@ -76,7 +76,9 @@ struct Monitor {
     rect: Rect,
     client_area: Rect,
     selected_hwnd: HWND,
-    clients: Vec<Client> // Reversed order
+    clients: Vec<Client>, // Reversed order
+    tagset: [u32; 2],
+    selected_tag_index: usize
 }
 
 impl Monitor {
@@ -99,16 +101,21 @@ impl Monitor {
         None
     }
 
-    unsafe fn is_tiled(client: &Client) -> bool {
-        !client.is_floating
+    fn is_visible(client: &Client, visible_tags: u32) -> bool {
+        return (visible_tags & client.tags) != 0
+    }
+
+    unsafe fn is_tiled(client: &Client, visible_tags: u32) -> bool {
+        (!client.is_floating) && Self::is_visible(client, visible_tags)
     }
 
     unsafe fn tile(&mut self) -> Result<()> {
+        let visible_tags = self.tagset[self.selected_tag_index];
         let clients = &mut self.clients;
 
         let mut tiled_count: u32 = 0;
         for client in clients.iter() {
-            tiled_count += Self::is_tiled(client) as u32;
+            tiled_count += Self::is_tiled(client, visible_tags) as u32;
         }
 
         if tiled_count <= 0 {
@@ -130,7 +137,7 @@ impl Monitor {
         };
 
         for (index, client) in clients.iter_mut().rev().enumerate() {
-            if !Self::is_tiled(client) {
+            if !Self::is_tiled(client, visible_tags) {
                 continue;
             }
 
@@ -460,6 +467,7 @@ impl DwmrApp {
             client_area: Rect::from_win_rect(&monitor_info.monitorInfo.rcWork),
             master_count: 1,
             master_factor: 0.5,
+            tagset: [1, 1],
             ..Default::default()
         };
 
@@ -642,6 +650,14 @@ impl DwmrApp {
     }
 
     unsafe fn manage(&mut self, hwnd: &HWND) -> Result<Client> {
+        for monitor in self.monitors.iter() {
+            for client in monitor.clients.iter() {
+            if client.hwnd == *hwnd {
+                return Ok(client.clone());
+            }
+            }
+        }
+
         let mut window_info = WINDOWINFO {
             cbSize: size_of::<WINDOWINFO>() as u32,
             ..Default::default()
@@ -682,6 +698,7 @@ impl DwmrApp {
             is_minimized,
             is_cloaked,
             monitor: monitor_index,
+            tags: 1,
             ..Default::default()
         };
         self.monitors[monitor_index].clients.push(client.clone());
