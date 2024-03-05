@@ -46,6 +46,7 @@ const S_APP_NAME: PCSTR = s!("dwmr-win32");
 
 const W_WALLPAPER_CLASS_NAME: PCWSTR = w!("Progman");
 const BAR_HEIGHT: i32 = 20;
+const TAGMASK: u32 = (1 << TAGS.len()) - 1;
 
 #[derive(Default, Clone, Debug)]
 struct Rect {
@@ -83,7 +84,23 @@ struct Monitor {
 
 impl Monitor {
     unsafe fn arrangemon(&mut self) -> Result<()> {
+        self.show_hide()?;
         self.tile()?;
+        Ok(())
+    }
+
+    unsafe fn show_hide(&mut self) -> Result<()> {
+        for client in self.clients.iter_mut() {
+            let is_visible = Self::is_visible(client, self.tagset[self.selected_tag_index]);
+            let is_window_visible = IsWindowVisible(client.hwnd) == TRUE;
+            if is_visible && !is_window_visible {
+                ShowWindow(client.hwnd, SW_NORMAL);
+            }
+
+            if !is_visible && is_window_visible {
+                ShowWindow(client.hwnd, SW_HIDE);
+            }
+        }
         Ok(())
     }
 
@@ -216,7 +233,6 @@ struct Client {
     is_ignored: bool,
     ignore_borders: bool,
     border: bool,
-    was_visible: bool,
     is_fixed: bool,
     is_urgent: bool,
     is_cloaked: bool,
@@ -762,6 +778,27 @@ impl DwmrApp {
             TranslateMessage(&mut msg);
             DispatchMessageW(&mut msg);
         }
+        Ok(())
+    }
+
+    pub unsafe fn view(&mut self, arg: &Option<Arg>) -> Result<()> {
+        if arg.is_none() {
+            return Ok(());
+        }
+
+        let selected_tag = arg.as_ref().unwrap().ui;
+
+        let monitor_index = self.selected_monitor_index.unwrap();
+        let monitor = &mut self.monitors[monitor_index];
+        if (selected_tag & TAGMASK) == monitor.tagset[monitor.selected_tag_index] {
+            return Ok(());
+        }
+
+        monitor.selected_tag_index ^= 1;
+        if (selected_tag & TAGMASK) != 0 {
+            monitor.tagset[monitor.selected_tag_index] = selected_tag & TAGMASK;
+        }
+        self.arrange()?;
         Ok(())
     }
 
