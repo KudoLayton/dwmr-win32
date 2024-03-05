@@ -153,7 +153,8 @@ impl Monitor {
             self.rect.width
         };
 
-        for (index, client) in clients.iter_mut().rev().enumerate() {
+        let mut index = 0;
+        for client in clients.iter_mut().rev() {
             if !Self::is_tiled(client, visible_tags) {
                 continue;
             }
@@ -176,6 +177,7 @@ impl Monitor {
                     height: height as i32
                 }
             };
+            index += 1;
 
             ShowWindow(client.hwnd, SW_NORMAL);
             SetWindowPos(
@@ -359,8 +361,16 @@ impl DwmrApp {
                 LRESULT::default()
             }
             WM_HOTKEY => {
+                let tag_keys_sub_len = TAG_KEYS.first().unwrap().len();
+                let tag_keys_len = TAG_KEYS.len() * tag_keys_sub_len;
                 if wparam.0 < KEYS.len(){
                     let key = &KEYS[wparam.0];
+                    (key.func)(self, &key.arg).unwrap();
+                } else if wparam.0 < KEYS.len() + tag_keys_len {
+                    let tag_key_index = wparam.0 - KEYS.len();
+                    let tag_key_first_index = tag_key_index / tag_keys_sub_len;
+                    let tag_key_second_index = tag_key_index % tag_keys_sub_len;
+                    let key = &TAG_KEYS[tag_key_first_index][tag_key_second_index];
                     (key.func)(self, &key.arg).unwrap();
                 }
                 LRESULT::default()
@@ -454,8 +464,17 @@ impl DwmrApp {
             return Ok(());
         }
 
-        for (index, key) in KEYS.iter().enumerate() {
-            RegisterHotKey(self.hwnd, index as i32, key.mod_key, key.key as u32)?;
+        let mut key_index = 0;
+        for key in KEYS.iter() {
+            RegisterHotKey(self.hwnd, key_index, key.mod_key, key.key as u32)?;
+            key_index += 1;
+        }
+
+        for tag_keys in TAG_KEYS.iter() {
+            for key in tag_keys.iter() {
+                RegisterHotKey(self.hwnd, key_index, key.mod_key, key.key as u32)?;
+                key_index += 1;
+            }
         }
         Ok(())
     }
@@ -769,7 +788,8 @@ impl DwmrApp {
             return Ok(());
         }
 
-        for key_index in 0..KEYS.len() {
+        let tag_keys_len = TAG_KEYS.len() * TAG_KEYS.first().unwrap().len();
+        for key_index in 0..(KEYS.len() + tag_keys_len) {
             UnregisterHotKey(self.hwnd, key_index as i32)?;
         }
 
@@ -805,6 +825,74 @@ impl DwmrApp {
         if (selected_tag & TAGMASK) != 0 {
             monitor.tagset[monitor.selected_tag_index] = selected_tag & TAGMASK;
         }
+        self.refresh_focus()?;
+        self.arrange()?;
+        Ok(())
+    }
+
+    pub unsafe fn toggle_view(&mut self, arg: &Option<Arg>) -> Result<()> {
+        if arg.is_none() {
+            return Ok(());
+        }
+
+        let selected_tag = arg.as_ref().unwrap().ui;
+
+        let monitor_index = self.selected_monitor_index.unwrap();
+        let monitor = &mut self.monitors[monitor_index];
+        let new_tag_set = (selected_tag & TAGMASK) ^ monitor.tagset[monitor.selected_tag_index];
+
+        if new_tag_set == 0 {
+            return Ok(());
+        }
+        monitor.tagset[monitor.selected_tag_index] = new_tag_set;
+        self.refresh_focus()?;
+        self.arrange()?;
+        Ok(())
+    }
+
+    pub unsafe fn tag(&mut self, arg: &Option<Arg>) -> Result<()> {
+        if arg.is_none() {
+            return Ok(());
+        }
+
+        let selected_tag = arg.as_ref().unwrap().ui & TAGMASK;
+        if selected_tag == 0 {
+            return Ok(());
+        }
+
+        let monitor_index = self.selected_monitor_index.unwrap();
+        let monitor = &mut self.monitors[monitor_index];
+        let selected_client_index = monitor.get_selected_client_index();
+        if selected_client_index.is_none() {
+            return Ok(());
+        }
+
+        monitor.clients[selected_client_index.unwrap()].tags = selected_tag;
+        self.refresh_focus()?;
+        self.arrange()?;
+        Ok(())
+    }
+
+    pub unsafe fn toggle_tag(&mut self, arg: &Option<Arg>) -> Result<()> {
+        if arg.is_none() {
+            return Ok(());
+        }
+
+        let monitor_index = self.selected_monitor_index.unwrap();
+        let monitor = &mut self.monitors[monitor_index];
+        let selected_client_index = monitor.get_selected_client_index();
+        if selected_client_index.is_none() {
+            return Ok(());
+        }
+
+        let selected_tag = arg.as_ref().unwrap().ui & TAGMASK;
+        let new_tags = monitor.clients[selected_client_index.unwrap()].tags ^ selected_tag;
+        if new_tags == 0 {
+            return Ok(());
+        }
+
+        monitor.clients[selected_client_index.unwrap()].tags = new_tags;
+        self.refresh_focus()?;
         self.arrange()?;
         Ok(())
     }
