@@ -758,6 +758,13 @@ impl DwmrApp {
         }
         self.event_hook.clear();
 
+        let monitors = &self.monitors;
+        for monitor in monitors.iter() {
+            for client in monitor.clients.iter() {
+                ShowWindow(client.hwnd, SW_RESTORE);
+            }
+        }
+
         if self.hwnd.0 == 0 {
             return Ok(());
         }
