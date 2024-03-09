@@ -1,9 +1,12 @@
 use windows::{
     core::*,
+    Foundation::Numerics::*,
     Win32::{
+        UI::HiDpi::*,
         System::{
             Diagnostics::Debug::*, 
-            Threading::*
+            Threading::*,
+            LibraryLoader::*,
         },
         Foundation::*,
         UI::{
@@ -13,7 +16,10 @@ use windows::{
         },
         Graphics::{
             Dwm::*,
-            Gdi::*
+            Gdi::*,
+            Direct2D::{*, Common::{D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F}},
+            Dxgi::Common::*,
+            DirectWrite::*,
         }
     }
 };
@@ -26,7 +32,10 @@ use std::{
 };
 
 pub mod config;
+pub mod graphic_utils;
+
 use config::*;
+use graphic_utils::*;
 
 #[cfg(test)]
 mod test;
@@ -43,10 +52,12 @@ extern  crate lazy_static;
 
 const W_APP_NAME: PCWSTR = w!("dwmr-win32");
 const S_APP_NAME: PCSTR = s!("dwmr-win32");
+const W_BAR_NAME: PCWSTR = w!("dwmr-bar");
 
 const W_WALLPAPER_CLASS_NAME: PCWSTR = w!("Progman");
 const BAR_HEIGHT: i32 = 20;
 const TAGMASK: u32 = (1 << TAGS.len()) - 1;
+const DEFAULT_DPI : f32 = 96.0;
 
 #[derive(Default, Clone, Debug)]
 struct Rect {
@@ -68,6 +79,166 @@ impl Rect {
 }
 
 #[derive(Default, Debug)]
+struct Bar {
+    hwnd: HWND,
+    rect: Rect,
+    render_target: Option<ID2D1HwndRenderTarget>,
+    text_brush: Option<ID2D1SolidColorBrush>,
+    text_box_brush: Option<ID2D1SolidColorBrush>,
+    text_format: Option<IDWriteTextFormat>,
+    write_factory: Option<IDWriteFactory>,
+    dpi: f32,
+}
+
+impl Bar {
+    pub unsafe fn setup_bar(&mut self, display_rect: &Rect, hinstance: &HINSTANCE) -> Result<()> {
+        let focus_hwnd = GetForegroundWindow();
+
+        let hwnd_result = CreateWindowExW(
+            WS_EX_TOOLWINDOW,
+            W_BAR_NAME.clone(),
+            W_BAR_NAME.clone(),
+            WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+            display_rect.x,
+            display_rect.y,
+            display_rect.width,
+            BAR_HEIGHT as i32,
+            None,
+            None,
+            None,
+            Some(self as *const _ as _)
+        );
+
+        if hwnd_result.0 == 0 {
+            GetLastError()?;
+        }
+
+        self.hwnd = hwnd_result;
+        self.rect = display_rect.clone();
+        self.rect.height = BAR_HEIGHT;
+        self.dpi = GetDpiForWindow(hwnd_result) as f32 / 96.0;
+
+        let factory = D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
+        let render_target_property = D2D1_RENDER_TARGET_PROPERTIES {
+            r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            pixelFormat: Common::D2D1_PIXEL_FORMAT {
+                format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+            },
+            dpiX: 0.0,
+            dpiY: 0.0,
+            usage: D2D1_RENDER_TARGET_USAGE_NONE,
+            minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
+        };
+
+        let hwnd_render_target_properties = D2D1_HWND_RENDER_TARGET_PROPERTIES {
+            hwnd: hwnd_result,
+            pixelSize: Common::D2D_SIZE_U {
+                width: 1920,
+                height: BAR_HEIGHT as u32,
+            },
+            presentOptions: D2D1_PRESENT_OPTIONS_NONE,
+        };
+        let render_target = factory.CreateHwndRenderTarget(&render_target_property, &hwnd_render_target_properties)?;
+
+        let black_color = Common::D2D1_COLOR_F{ r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
+        let blue_color = Common::D2D1_COLOR_F{ r: 0.0, g: 0.0, b: 1.0, a: 1.0 };
+        let brush_property = D2D1_BRUSH_PROPERTIES { 
+            opacity: 1.0, 
+            transform: Matrix3x2::identity()
+        };
+
+        let black_brush = render_target.CreateSolidColorBrush(&black_color, Some(&brush_property as *const _))?;
+        let blue_brush = render_target.CreateSolidColorBrush(&blue_color, Some(&brush_property as *const _))?;
+        self.render_target = Some(render_target);
+        self.text_brush = Some(black_brush);
+        self.text_box_brush = Some(blue_brush);
+
+        let write_factory = DWriteCreateFactory::<IDWriteFactory>(DWRITE_FACTORY_TYPE_ISOLATED)?;
+        let text_format = write_factory.CreateTextFormat(
+            w!("Arial"), 
+            None, 
+            DWRITE_FONT_WEIGHT_REGULAR, 
+            DWRITE_FONT_STYLE_NORMAL, 
+            DWRITE_FONT_STRETCH_NORMAL,
+            20.0, 
+            w!("ko-kr"))?;
+
+        self.write_factory = Some(write_factory);
+        self.text_format = Some(text_format);
+
+        ShowWindow(hwnd_result, SW_SHOW);
+        UpdateWindow(hwnd_result);
+        SetForegroundWindow(focus_hwnd);
+        Ok(())
+    }
+
+    unsafe extern "system" fn bar_wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        match msg {
+            WM_CREATE => {
+                let create_struct = lparam.0 as *const CREATESTRUCTW;
+                let this = (*create_struct).lpCreateParams as *mut Bar;
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, this as isize);
+                LRESULT::default()
+            }
+            WM_DESTROY => {
+                PostQuitMessage(0);
+                LRESULT::default()
+            }
+            WM_PAINT => {
+                let this = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Bar;
+                if this.is_null() {
+                    return LRESULT::default();
+                }
+
+                let mut ps = PAINTSTRUCT::default();
+                let hdc = BeginPaint(hwnd, &mut ps);
+                    (*this).draw().unwrap();
+                EndPaint(hwnd, &ps);
+                LRESULT::default()
+            }
+            _ => DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+    }
+
+    unsafe fn draw(&self) -> Result<()> {
+        if self.hwnd.0 == 0 {
+            return Ok(());
+        }
+
+        if self.render_target.is_none() || self.text_box_brush.is_none() || self.text_format.is_none(){
+            return Ok(());
+        }
+
+        let render_target_ref = self.render_target.as_ref().unwrap();
+        render_target_ref.BeginDraw();
+
+        let background_color = D2D1_COLOR_F{r: 1.0, g: 0.0, b: 1.0, a:1.0};
+        render_target_ref.Clear(Some(&background_color));
+        self.draw_text_box(w!("다람쥐 챗바퀴 돌듯 hello world!").as_wide(), 10.0)?;
+        render_target_ref.EndDraw(None, None)?;
+
+        Ok(())
+    }
+
+    unsafe fn draw_text_box(&self, text: &[u16], font_size: f32) -> Result<()> 
+    {
+        implement_draw_text_box(
+            text, 
+            font_size, 
+            self.rect.width as f32, 
+            self.rect.height as f32, 
+            self.dpi, 
+            self.text_format.as_ref().unwrap(), 
+            self.write_factory.as_ref().unwrap(), 
+            self.render_target.as_ref().unwrap(), 
+            self.text_box_brush.as_ref().unwrap(),
+            self.text_brush.as_ref().unwrap())?;
+        Ok(())
+    }
+}
+
+#[derive(Default, Debug)]
 struct Monitor {
     name: [u16; 32], //LPCWSTR type
     master_count: u32,
@@ -79,7 +250,8 @@ struct Monitor {
     selected_hwnd: HWND,
     clients: Vec<Client>, // Reversed order
     tagset: [u32; 2],
-    selected_tag_index: usize
+    selected_tag_index: usize,
+    bar: Bar
 }
 
 impl Monitor {
@@ -248,6 +420,7 @@ pub struct DwmrApp {
     monitors: Vec<Monitor>,
     selected_monitor_index: Option<usize>,
     event_hook: Vec<HWINEVENTHOOK>,
+    test_bar: Bar,
 }
 
 lazy_static! {
@@ -279,15 +452,6 @@ lazy_static! {
 
 impl DwmrApp {
     pub unsafe fn setup(&mut self, hinstance: &HINSTANCE) -> Result<()> {
-        self.request_update_geom()?;
-
-        let wallpaper_hwnd = FindWindowW(W_WALLPAPER_CLASS_NAME, None);
-        if wallpaper_hwnd.0 == 0 {
-            GetLastError()?;
-        }
-
-        self.wallpaper_hwnd = wallpaper_hwnd;
-
         let wnd_class = WNDCLASSEXW {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(Self::wnd_proc),
@@ -320,17 +484,39 @@ impl DwmrApp {
             GetLastError()?;
         }
 
+        let bar_wnd_class = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            lpfnWndProc: Some(Bar::bar_wnd_proc),
+            hInstance: *hinstance,
+            lpszClassName: W_BAR_NAME.clone(),
+            hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as isize),
+            ..Default::default()
+        };
+
+        let bar_class_atom = RegisterClassExW(&bar_wnd_class);
+        if bar_class_atom == 0{
+            GetLastError()?;
+        }
+
+        self.request_update_geom()?;
+
+        let wallpaper_hwnd = FindWindowW(W_WALLPAPER_CLASS_NAME, None);
+        if wallpaper_hwnd.0 == 0 {
+            GetLastError()?;
+        }
+        self.wallpaper_hwnd = wallpaper_hwnd;
+
         self.event_hook.push(SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
         self.event_hook.push(SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
         self.event_hook.push(SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_DESTROY, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
 
         self.grab_keys()?;
+
         Ok(())
     }
 
 
-    unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
-    {
+    unsafe extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
             WM_CREATE => {
                 let create_struct = lparam.0 as *const CREATESTRUCTW;
@@ -349,8 +535,7 @@ impl DwmrApp {
         }
     }
 
-    unsafe fn handle_message(&mut self, hwnd:HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT
-    {
+    unsafe fn handle_message(&mut self, hwnd:HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
             WM_CLOSE => {
                 self.cleanup().unwrap();
@@ -495,7 +680,7 @@ impl DwmrApp {
 
         let this = lparam.0 as *mut DwmrApp;
 
-        let monitor = Monitor{
+        let mut monitor = Monitor{
             name: monitor_info.szDevice,
             index: (*this).monitors.len(),
             rect: Rect::from_win_rect(&monitor_info.monitorInfo.rcMonitor),
@@ -506,13 +691,20 @@ impl DwmrApp {
             ..Default::default()
         };
 
+        monitor.client_area.y += BAR_HEIGHT as i32;
+        monitor.client_area.height -= BAR_HEIGHT as i32;
+
+        let hmodule = GetModuleHandleW(None).unwrap();
+        let hinstance: HINSTANCE = hmodule.into();
+        let display_rect = monitor.rect.clone();
         (*this).monitors.push(monitor);
+        (*this).monitors.last_mut().as_mut().unwrap().bar.setup_bar(&display_rect, &hinstance).unwrap();
         TRUE
     }
 
     unsafe fn refresh_current_focus(&mut self) -> Result<()> {
         let focus_hwnd = GetForegroundWindow();
-        let mut selected_index: Option<usize> = None;
+        let mut selected_index: Option<usize> = Some(0);
         for (monitor_index, monitor) in self.monitors.iter_mut().enumerate() {
             for (index, client) in monitor.clients.iter().enumerate() {
                 if client.hwnd != focus_hwnd {
@@ -531,6 +723,7 @@ impl DwmrApp {
 
             break;
         }
+
         Ok(())
     }
 
