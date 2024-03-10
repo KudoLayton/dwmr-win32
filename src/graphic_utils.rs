@@ -24,18 +24,22 @@ use windows::{
     }
 };
 
+use super::Rect;
+
 pub unsafe fn implement_draw_text_box(
     text: &[u16],
     font_size: f32,
     max_width: f32,
     max_height: f32,
+    origin_x: f32,
+    origin_y: f32,
     dpi: f32,
     text_format: &IDWriteTextFormat,
     write_factory: &IDWriteFactory,
     render_target_ref: &ID2D1HwndRenderTarget,
     box_brush: &ID2D1SolidColorBrush,
     text_brush: &ID2D1SolidColorBrush,
-) -> Result<()> {
+) -> Result<f32> {
     let text_range = DWRITE_TEXT_RANGE{startPosition: 0, length: text.len() as u32};
     let mut text_metrics = DWRITE_TEXT_METRICS::default();
 
@@ -49,12 +53,18 @@ pub unsafe fn implement_draw_text_box(
     text_layout.SetLocaleName(w!("ko_kr"), text_range.clone())?;
     text_layout.GetMetrics(&mut text_metrics)?;
 
-    let rect = Common::D2D_RECT_F{left: 0.0, top: 0.0, right: text_metrics.width, bottom: text_metrics.height};
+    let rect = Common::D2D_RECT_F {
+        left: origin_x, 
+        top: max_height, 
+        right: origin_x + &text_metrics.width, 
+        bottom: 0.0
+    };
     render_target_ref.FillRectangle(&rect, box_brush);
     render_target_ref.DrawTextLayout(
-        Common::D2D_POINT_2F{x: 0.0,y: 0.0}, 
+        //Common::D2D_POINT_2F{x: rect.left, y: (max_height / 2.0) - (&text_metrics.width / 2.0)}, 
+        Common::D2D_POINT_2F{x: rect.left, y: 0.0}, 
         &text_layout, 
         text_brush, 
         D2D1_DRAW_TEXT_OPTIONS_NONE);
-    Ok(())
+    Ok(origin_x + text_metrics.width)
 }

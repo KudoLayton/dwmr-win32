@@ -11,7 +11,17 @@ macro_rules! tag_keys {
     };
 }
 
-pub const TAGS: [u32; 9] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+pub const TAGS: [PCWSTR; 9] = [
+    w!("1"),
+    w!("2"),
+    w!("3"),
+    w!("4"),
+    w!("5"),
+    w!("6"),
+    w!("7"),
+    w!("8"),
+    w!("9"),
+];
 
 pub const EXCLUDE_DEBUGGED_WINDOW: bool = true;
 

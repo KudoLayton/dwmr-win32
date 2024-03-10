@@ -85,9 +85,11 @@ struct Bar {
     render_target: Option<ID2D1HwndRenderTarget>,
     text_brush: Option<ID2D1SolidColorBrush>,
     text_box_brush: Option<ID2D1SolidColorBrush>,
+    background_brush: Option<ID2D1SolidColorBrush>,
     text_format: Option<IDWriteTextFormat>,
     write_factory: Option<IDWriteFactory>,
     dpi: f32,
+    selected_tags: u32,
 }
 
 impl Bar {
@@ -114,8 +116,12 @@ impl Bar {
         }
 
         self.hwnd = hwnd_result;
-        self.rect = display_rect.clone();
-        self.rect.height = BAR_HEIGHT;
+        self.rect = Rect {
+            x: 0,
+            y: 0,
+            width: display_rect.width,
+            height: BAR_HEIGHT
+        };
         self.dpi = GetDpiForWindow(hwnd_result) as f32 / 96.0;
 
         let factory = D2D1CreateFactory::<ID2D1Factory>(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
@@ -143,6 +149,7 @@ impl Bar {
 
         let black_color = Common::D2D1_COLOR_F{ r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
         let blue_color = Common::D2D1_COLOR_F{ r: 0.0, g: 0.0, b: 1.0, a: 1.0 };
+        let back_color = Common::D2D1_COLOR_F{ r: 1.0, g: 0.0, b: 1.0, a: 1.0 };
         let brush_property = D2D1_BRUSH_PROPERTIES { 
             opacity: 1.0, 
             transform: Matrix3x2::identity()
@@ -150,9 +157,11 @@ impl Bar {
 
         let black_brush = render_target.CreateSolidColorBrush(&black_color, Some(&brush_property as *const _))?;
         let blue_brush = render_target.CreateSolidColorBrush(&blue_color, Some(&brush_property as *const _))?;
+        let back_brush = render_target.CreateSolidColorBrush(&back_color, Some(&brush_property as *const _))?;
         self.render_target = Some(render_target);
         self.text_brush = Some(black_brush);
         self.text_box_brush = Some(blue_brush);
+        self.background_brush = Some(back_brush);
 
         let write_factory = DWriteCreateFactory::<IDWriteFactory>(DWRITE_FACTORY_TYPE_ISOLATED)?;
         let text_format = write_factory.CreateTextFormat(
@@ -215,26 +224,57 @@ impl Bar {
 
         let background_color = D2D1_COLOR_F{r: 1.0, g: 0.0, b: 1.0, a:1.0};
         render_target_ref.Clear(Some(&background_color));
-        self.draw_text_box(w!("다람쥐 챗바퀴 돌듯 hello world!").as_wide(), 10.0)?;
+
+        let mut x_pos = 0.0;
+        for i in 0..TAGS.len() {
+            if has_flag!(self.selected_tags, 1 << i) {
+                x_pos = self.draw_selected_text_box(TAGS[i].as_wide(), 10.0, x_pos)?;
+            }
+            else {
+                x_pos = self.draw_unselected_text_box(TAGS[i].as_wide(), 10.0, x_pos)?;
+            }
+            x_pos += 5.0;
+        }
+
         render_target_ref.EndDraw(None, None)?;
 
         Ok(())
     }
 
-    unsafe fn draw_text_box(&self, text: &[u16], font_size: f32) -> Result<()> 
+    unsafe fn draw_unselected_text_box(&self, text: &[u16], font_size: f32, origin_x: f32) -> Result<(f32)> 
     {
-        implement_draw_text_box(
+        let next_width = implement_draw_text_box(
             text, 
             font_size, 
             self.rect.width as f32, 
             self.rect.height as f32, 
+            origin_x, 
+            self.rect.y as f32,
+            self.dpi, 
+            self.text_format.as_ref().unwrap(), 
+            self.write_factory.as_ref().unwrap(), 
+            self.render_target.as_ref().unwrap(), 
+            self.background_brush.as_ref().unwrap(),
+            self.text_brush.as_ref().unwrap())?;
+        Ok(next_width)
+    }
+
+    unsafe fn draw_selected_text_box(&self, text: &[u16], font_size: f32, origin_x: f32) -> Result<(f32)> 
+    {
+        let next_width = implement_draw_text_box(
+            text, 
+            font_size, 
+            self.rect.width as f32, 
+            self.rect.height as f32, 
+            origin_x, 
+            self.rect.y as f32,
             self.dpi, 
             self.text_format.as_ref().unwrap(), 
             self.write_factory.as_ref().unwrap(), 
             self.render_target.as_ref().unwrap(), 
             self.text_box_brush.as_ref().unwrap(),
             self.text_brush.as_ref().unwrap())?;
-        Ok(())
+        Ok(next_width)
     }
 }
 
@@ -290,8 +330,18 @@ impl Monitor {
         None
     }
 
-    fn is_visible(client: &Client, visible_tags: u32) -> bool {
+    pub fn is_visible(client: &Client, visible_tags: u32) -> bool {
         return (visible_tags & client.tags) != 0
+    }
+
+    pub fn visible_clinets_count(&self) -> i32 {
+        let mut count = 0;
+        for client in self.clients.iter() {
+            if Self::is_visible(client, self.tagset[self.selected_tag_index]) {
+                count += 1;
+            }
+        }
+        return count;
     }
 
     unsafe fn is_tiled(client: &Client, visible_tags: u32) -> bool {
@@ -420,7 +470,7 @@ pub struct DwmrApp {
     monitors: Vec<Monitor>,
     selected_monitor_index: Option<usize>,
     event_hook: Vec<HWINEVENTHOOK>,
-    test_bar: Bar,
+    bar: Bar,
 }
 
 lazy_static! {
@@ -608,7 +658,7 @@ impl DwmrApp {
                 self.monitors[client.monitor].arrangemon().unwrap();
             }
             EVENT_OBJECT_DESTROY => {
-                self.unmanage(hwnd).unwrap();
+                self.unmanage(&hwnd).unwrap();
             }
             _ => ()
         }
@@ -693,6 +743,7 @@ impl DwmrApp {
 
         monitor.client_area.y += BAR_HEIGHT as i32;
         monitor.client_area.height -= BAR_HEIGHT as i32;
+        monitor.bar.selected_tags = 1;
 
         let hmodule = GetModuleHandleW(None).unwrap();
         let hinstance: HINSTANCE = hmodule.into();
@@ -934,11 +985,11 @@ impl DwmrApp {
         Ok(client)
     }
 
-    unsafe fn unmanage(&mut self, hwnd: HWND) -> Result<()> {
+    unsafe fn unmanage(&mut self, hwnd: &HWND) -> Result<()> {
         for monitor in self.monitors.iter_mut() {
             let mut found_index: Option<usize> = None;
             for (index, client) in monitor.clients.iter().enumerate() {
-                if client.hwnd == hwnd {
+                if client.hwnd == *hwnd {
                     found_index = Some(index);
                     break;
                 }
@@ -1018,6 +1069,8 @@ impl DwmrApp {
         if (selected_tag & TAGMASK) != 0 {
             monitor.tagset[monitor.selected_tag_index] = selected_tag & TAGMASK;
         }
+        monitor.bar.selected_tags = monitor.tagset[monitor.selected_tag_index];
+        let _result = RedrawWindow(monitor.bar.hwnd, None, None, RDW_INVALIDATE);
         self.refresh_focus()?;
         self.arrange()?;
         Ok(())
@@ -1038,6 +1091,8 @@ impl DwmrApp {
             return Ok(());
         }
         monitor.tagset[monitor.selected_tag_index] = new_tag_set;
+        monitor.bar.selected_tags = new_tag_set;
+        let _result = RedrawWindow(monitor.bar.hwnd, None, None, RDW_INVALIDATE);
         self.refresh_focus()?;
         self.arrange()?;
         Ok(())
@@ -1137,12 +1192,26 @@ impl DwmrApp {
         }
 
         let selected_client_index = selected_client_index_option.unwrap();
-        let clients_count = selected_monitor.clients.len();
+        let clients_count = selected_monitor.visible_clinets_count();
         if clients_count == 0 {
             return Ok(());
         }
 
-        let new_focus_index = Self::offset_to_new_index(clients_count, selected_client_index, offset);
+        let mut new_focus_index = selected_client_index;
+        let mut left_offset = offset;
+        let selected_tag = selected_monitor.tagset[selected_monitor.selected_tag_index];
+        while left_offset > 0 {
+            left_offset -= 1;
+            new_focus_index += 1;
+            new_focus_index %= selected_monitor.clients.len();
+
+            while !Monitor::is_visible(&selected_monitor.clients[new_focus_index], selected_tag) {
+                new_focus_index += 1;
+                new_focus_index %= selected_monitor.clients.len();
+            }
+        }
+
+        //let new_focus_index = Self::offset_to_new_index(clients_count, selected_client_index, offset);
         if new_focus_index == selected_client_index {
             return Ok(());
         }
@@ -1194,10 +1263,14 @@ impl DwmrApp {
             return Ok(());
         }
 
-        let selected_client_option = selected_monitor.get_selected_client_index();
-        if selected_client_option.is_none() {
+        let mut selected_client_option = selected_monitor.get_selected_client_index();
+        if selected_client_option.is_none() && selected_monitor.clients.len() == 0 {
             Self::unfocus()?;
             return Ok(());
+        }
+
+        if selected_client_option.is_none() && selected_monitor.clients.len() > 0 {
+            selected_client_option = Some(selected_monitor.clients.len() - 1);
         }
 
         let selected_client_hwnd = selected_monitor.clients[selected_client_option.unwrap()].hwnd;
