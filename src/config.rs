@@ -1,3 +1,4 @@
+use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
 use super::*;
 
 macro_rules! tag_keys {
@@ -29,14 +30,10 @@ pub const MOD_KEY: HOT_KEY_MODIFIERS = MOD_ALT;
 
 pub const BAR_TRANSPARENCY: f32 = 0.8;
 
-pub const KEYS: [Key; 6] = [
-    Key{mod_key:MOD_KEY,        key:'Q',     func:DwmrApp::quit,                    arg:None},
-    Key{mod_key:MOD_KEY,        key:'Z',     func:DwmrApp::zoom,                    arg:None},
-    Key{mod_key:MOD_KEY,        key:'J',     func:DwmrApp::focus_stack,             arg:Some(Arg{i:  1})},
-    Key{mod_key:MOD_KEY,        key:'K',     func:DwmrApp::focus_stack,             arg:Some(Arg{i: -1})},
-    Key{mod_key:MOD_KEY,        key:'H',     func:DwmrApp::focus_monitor,           arg:Some(Arg{i:  1})},
-    Key{mod_key:MOD_KEY,        key:'L',     func:DwmrApp::focus_monitor,           arg:Some(Arg{i: -1})},
-];
+pub const BAR_COLOR_BACKGROUND      :D2D1_COLOR_F   = D2D1_COLOR_F{ r:  40.0 / 255.0, g:  44.0 / 255.0, b:  55.0 / 255.0, a: 1.0 };
+pub const BAR_COLOR_SELECTED_BOX    :D2D1_COLOR_F   = D2D1_COLOR_F{ r:  43.0 / 255.0, g: 144.0 / 255.0, b: 217.0 / 255.0, a: 1.0 };
+pub const BAR_COLOR_UNSELECTED_TEXT :D2D1_COLOR_F   = D2D1_COLOR_F{ r: 155.0 / 255.0, g: 174.0 / 255.0, b: 200.0 / 255.0, a: 1.0 };
+pub const BAR_COLOR_SELECTED_TEXT   :D2D1_COLOR_F   = D2D1_COLOR_F{ r: 217.0 / 255.0, g: 225.0 / 255.0, b: 232.0 / 255.0, a: 1.0 };
 
 lazy_static! {
      pub static ref TAG_KEYS: [[Key; 4]; 9] = [
@@ -49,5 +46,16 @@ lazy_static! {
         tag_keys!('7', 6),
         tag_keys!('8', 7),
         tag_keys!('9', 8),
+    ];
+
+    pub static ref KEYS: [Key; 8] = [
+        Key{mod_key:MOD_KEY,                    key:'Q',     func:DwmrApp::quit,                    arg:None},
+        Key{mod_key:MOD_KEY,                    key:'Z',     func:DwmrApp::zoom,                    arg:None},
+        Key{mod_key:MOD_KEY,                    key:'J',     func:DwmrApp::focus_stack,             arg:Some(Arg{i:  1})},
+        Key{mod_key:MOD_KEY,                    key:'K',     func:DwmrApp::focus_stack,             arg:Some(Arg{i: -1})},
+        Key{mod_key:MOD_KEY,                    key:'H',     func:DwmrApp::focus_monitor,           arg:Some(Arg{i:  1})},
+        Key{mod_key:MOD_KEY,                    key:'L',     func:DwmrApp::focus_monitor,           arg:Some(Arg{i: -1})},
+        Key{mod_key:MOD_KEY|MOD_SHIFT,          key:'H',     func:DwmrApp::tag_monitor,             arg:Some(Arg{i:  1})},
+        Key{mod_key:MOD_KEY|MOD_SHIFT,          key:'L',     func:DwmrApp::tag_monitor,             arg:Some(Arg{i: -1})},
     ];
 }

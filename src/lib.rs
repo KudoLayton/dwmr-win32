@@ -51,7 +51,6 @@ macro_rules! has_flag {
 extern  crate lazy_static;
 
 const W_APP_NAME: PCWSTR = w!("dwmr-win32");
-const S_APP_NAME: PCSTR = s!("dwmr-win32");
 const W_BAR_NAME: PCWSTR = w!("dwmr-bar");
 
 const W_WALLPAPER_CLASS_NAME: PCWSTR = w!("Progman");
@@ -82,8 +81,10 @@ impl Rect {
 struct Bar {
     hwnd: HWND,
     rect: Rect,
+    is_selected_monitor: bool,
     render_target: Option<ID2D1HwndRenderTarget>,
-    text_brush: Option<ID2D1SolidColorBrush>,
+    unselected_text_brush: Option<ID2D1SolidColorBrush>,
+    selected_text_brush: Option<ID2D1SolidColorBrush>,
     text_box_brush: Option<ID2D1SolidColorBrush>,
     background_brush: Option<ID2D1SolidColorBrush>,
     text_format: Option<IDWriteTextFormat>,
@@ -149,21 +150,20 @@ impl Bar {
         };
         let render_target = factory.CreateHwndRenderTarget(&render_target_property, &hwnd_render_target_properties)?;
 
-        let black_color = Common::D2D1_COLOR_F{ r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
-        let blue_color = Common::D2D1_COLOR_F{ r: 0.0, g: 0.0, b: 1.0, a: 1.0 };
-        let back_color = Common::D2D1_COLOR_F{ r: 1.0, g: 0.0, b: 1.0, a: 1.0 };
         let brush_property = D2D1_BRUSH_PROPERTIES { 
             opacity: 1.0, 
             transform: Matrix3x2::identity()
         };
 
-        let black_brush = render_target.CreateSolidColorBrush(&black_color, Some(&brush_property as *const _))?;
-        let blue_brush = render_target.CreateSolidColorBrush(&blue_color, Some(&brush_property as *const _))?;
-        let back_brush = render_target.CreateSolidColorBrush(&back_color, Some(&brush_property as *const _))?;
+        let background_brush = render_target.CreateSolidColorBrush(&BAR_COLOR_BACKGROUND, Some(&brush_property as *const _))?;
+        let selected_box_brush = render_target.CreateSolidColorBrush(&BAR_COLOR_SELECTED_BOX, Some(&brush_property as *const _))?;
+        let selected_text_brush = render_target.CreateSolidColorBrush(&BAR_COLOR_SELECTED_TEXT, Some(&brush_property as *const _))?;
+        let unselected_text_brush = render_target.CreateSolidColorBrush(&BAR_COLOR_UNSELECTED_TEXT, Some(&brush_property as *const _))?;
         self.render_target = Some(render_target);
-        self.text_brush = Some(black_brush);
-        self.text_box_brush = Some(blue_brush);
-        self.background_brush = Some(back_brush);
+        self.unselected_text_brush = Some(unselected_text_brush.clone());
+        self.selected_text_brush = Some(selected_text_brush);
+        self.text_box_brush = Some(selected_box_brush);
+        self.background_brush = Some(background_brush);
 
         let write_factory = DWriteCreateFactory::<IDWriteFactory>(DWRITE_FACTORY_TYPE_ISOLATED)?;
         let text_format = write_factory.CreateTextFormat(
@@ -203,7 +203,7 @@ impl Bar {
                 }
 
                 let mut ps = PAINTSTRUCT::default();
-                let hdc = BeginPaint(hwnd, &mut ps);
+                let _hdc = BeginPaint(hwnd, &mut ps);
                     (*this).draw().unwrap();
                 EndPaint(hwnd, &ps);
                 LRESULT::default()
@@ -224,17 +224,16 @@ impl Bar {
         let render_target_ref = self.render_target.as_ref().unwrap();
         render_target_ref.BeginDraw();
 
-        let background_color = D2D1_COLOR_F{r: 1.0, g: 0.0, b: 1.0, a:1.0};
-        render_target_ref.Clear(Some(&background_color));
+        render_target_ref.Clear(Some(&BAR_COLOR_BACKGROUND));
 
         let mut x_pos = 0.0;
         for i in 0..TAGS.len() {
-            if has_flag!(self.selected_tags, 1 << i) {
-                x_pos = self.draw_selected_text_box(TAGS[i].as_wide(), 10.0, x_pos)?;
-            }
-            else {
-                x_pos = self.draw_unselected_text_box(TAGS[i].as_wide(), 10.0, x_pos)?;
-            }
+            x_pos = match (has_flag!(self.selected_tags, 1 << i), self.is_selected_monitor) {
+                (true, true ) => self.draw_selected_monitor_selected_text_box(TAGS[i].as_wide(), 15.0, x_pos)?,
+                (true, false) => self.draw_unselected_monitor_selected_text_box(TAGS[i].as_wide(), 15.0, x_pos)?,
+                (false, _   ) => self.draw_unselected_text_box(TAGS[i].as_wide(), 15.0, x_pos)?
+
+            };
             x_pos += 5.0;
         }
 
@@ -243,7 +242,7 @@ impl Bar {
         Ok(())
     }
 
-    unsafe fn draw_unselected_text_box(&self, text: &[u16], font_size: f32, origin_x: f32) -> Result<(f32)> 
+    unsafe fn draw_unselected_text_box(&self, text: &[u16], font_size: f32, origin_x: f32) -> Result<f32> 
     {
         let next_width = implement_draw_text_box(
             text, 
@@ -257,11 +256,11 @@ impl Bar {
             self.write_factory.as_ref().unwrap(), 
             self.render_target.as_ref().unwrap(), 
             self.background_brush.as_ref().unwrap(),
-            self.text_brush.as_ref().unwrap())?;
+            self.unselected_text_brush.as_ref().unwrap())?;
         Ok(next_width)
     }
 
-    unsafe fn draw_selected_text_box(&self, text: &[u16], font_size: f32, origin_x: f32) -> Result<(f32)> 
+    unsafe fn draw_selected_monitor_selected_text_box(&self, text: &[u16], font_size: f32, origin_x: f32) -> Result<f32> 
     {
         let next_width = implement_draw_text_box(
             text, 
@@ -275,7 +274,25 @@ impl Bar {
             self.write_factory.as_ref().unwrap(), 
             self.render_target.as_ref().unwrap(), 
             self.text_box_brush.as_ref().unwrap(),
-            self.text_brush.as_ref().unwrap())?;
+            self.selected_text_brush.as_ref().unwrap())?;
+        Ok(next_width)
+    }
+
+    unsafe fn draw_unselected_monitor_selected_text_box(&self, text: &[u16], font_size: f32, origin_x: f32) -> Result<f32> 
+    {
+        let next_width = implement_draw_text_box(
+            text, 
+            font_size, 
+            self.rect.width as f32, 
+            self.rect.height as f32, 
+            origin_x, 
+            self.rect.y as f32,
+            self.dpi, 
+            self.text_format.as_ref().unwrap(), 
+            self.write_factory.as_ref().unwrap(), 
+            self.render_target.as_ref().unwrap(), 
+            self.unselected_text_brush.as_ref().unwrap(),
+            self.selected_text_brush.as_ref().unwrap())?;
         Ok(next_width)
     }
 }
@@ -651,6 +668,7 @@ impl DwmrApp {
         match event {
             EVENT_SYSTEM_FOREGROUND => {
                 self.set_focus(hwnd);
+                self.refresh_bar().unwrap();
             }
             EVENT_OBJECT_SHOW => {
                 if !Self::is_manageable(&hwnd).unwrap() {
@@ -666,7 +684,7 @@ impl DwmrApp {
         }
     }
 
-    unsafe fn set_focus(&mut self, hwnd: HWND)
+    fn set_focus(&mut self, hwnd: HWND)
     {
         if let Some(selected_monitor_index) = self.selected_monitor_index {
             if hwnd == self.monitors[selected_monitor_index].selected_hwnd {
@@ -755,6 +773,81 @@ impl DwmrApp {
         TRUE
     }
 
+    unsafe fn sendmon(&mut self, client: Client, target_monitor_index: usize) -> Result<()> {
+        if client.monitor == target_monitor_index {
+            return Ok(());
+        }
+
+        let found_index: Option<usize> = self.monitors[client.monitor].clients.iter().position(|c| c.hwnd == client.hwnd);
+
+        if found_index.is_none() {
+            return Ok(());
+        }
+
+        let current_monitor = &self.monitors[client.monitor];
+        let current_monitor_visible_tags = current_monitor.tagset[current_monitor.selected_tag_index];
+        let mut next_focus_index = (found_index.unwrap() + 1) % current_monitor.clients.len();
+        while !Monitor::is_visible(&self.monitors[client.monitor].clients[next_focus_index], current_monitor_visible_tags)
+        {
+            next_focus_index += 1;
+            next_focus_index %= current_monitor.clients.len();
+        }
+
+        if found_index.unwrap() == next_focus_index {
+            self.monitors[client.monitor].selected_hwnd = HWND(0);
+        } else {
+            self.monitors[client.monitor].selected_hwnd = current_monitor.clients[next_focus_index].hwnd;
+        }
+
+        self.monitors[client.monitor].clients.remove(found_index.unwrap());
+
+        let mut new_client = client;
+        new_client.monitor = target_monitor_index;
+        self.monitors[target_monitor_index].clients.push(new_client);
+
+        self.arrange()?;
+        self.refresh_focus()?;
+        Ok(())
+    }
+
+    pub unsafe fn tag_monitor(&mut self, arg: &Option<Arg>) -> Result<()> {
+        if arg.is_none() {
+            return Ok(());
+        }
+
+        if self.selected_monitor_index.is_none() {
+            return Ok(());
+        }
+
+        let index_offset = arg.as_ref().unwrap().i;
+        let new_index = (((self.selected_monitor_index.unwrap() as i32) + index_offset) % self.monitors.len() as i32) as usize;
+
+        let selected_monitor = &self.monitors[self.selected_monitor_index.unwrap()];
+        let selected_client_index = selected_monitor.get_selected_client_index();
+
+        if selected_client_index.is_none() {
+            return Ok(());
+        }
+
+        let selected_client = selected_monitor.clients[selected_client_index.unwrap()].clone();
+        self.sendmon(selected_client, new_index)?;
+        Ok(())
+    }
+
+    unsafe fn refresh_bar(&mut self) -> Result<()> {
+        let selected_monitor_index = self.selected_monitor_index;
+        for monitor in self.monitors.iter_mut() {
+            monitor.bar.selected_tags = monitor.tagset[monitor.selected_tag_index];
+            if selected_monitor_index.is_some() && monitor.index == selected_monitor_index.unwrap() {
+                monitor.bar.is_selected_monitor = true;
+            } else {
+                monitor.bar.is_selected_monitor = false;
+            }
+            let _result = RedrawWindow(monitor.bar.hwnd, None, None, RDW_INVALIDATE);
+        }
+        Ok(())
+    }
+
     unsafe fn refresh_current_focus(&mut self) -> Result<()> {
         let focus_hwnd = GetForegroundWindow();
         let mut selected_index: Option<usize> = Some(0);
@@ -776,7 +869,7 @@ impl DwmrApp {
 
             break;
         }
-
+        self.refresh_bar()?;
         Ok(())
     }
 
@@ -1266,11 +1359,6 @@ impl DwmrApp {
         }
 
         let mut selected_client_option = selected_monitor.get_selected_client_index();
-        if selected_client_option.is_none() && selected_monitor.clients.len() == 0 {
-            Self::unfocus()?;
-            return Ok(());
-        }
-
         if selected_client_option.is_none() && selected_monitor.clients.len() > 0 {
             selected_client_option = Some(selected_monitor.clients.len() - 1);
         }
@@ -1319,7 +1407,7 @@ impl DwmrApp {
         }
 
         self.refresh_focus()?;
-
+        self.refresh_bar()?;
         Ok(())
     }
 }
