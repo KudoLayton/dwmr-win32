@@ -27,6 +27,8 @@ pub const EXCLUDE_DEBUGGED_WINDOW: bool = true;
 
 pub const MOD_KEY: HOT_KEY_MODIFIERS = MOD_ALT;
 
+pub const BAR_TRANSPARENCY: f32 = 0.8;
+
 pub const KEYS: [Key; 6] = [
     Key{mod_key:MOD_KEY,        key:'Q',     func:DwmrApp::quit,                    arg:None},
     Key{mod_key:MOD_KEY,        key:'Z',     func:DwmrApp::zoom,                    arg:None},

@@ -97,7 +97,7 @@ impl Bar {
         let focus_hwnd = GetForegroundWindow();
 
         let hwnd_result = CreateWindowExW(
-            WS_EX_TOOLWINDOW,
+            WS_EX_TOOLWINDOW | WS_EX_LAYERED,
             W_BAR_NAME.clone(),
             W_BAR_NAME.clone(),
             WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
@@ -114,6 +114,8 @@ impl Bar {
         if hwnd_result.0 == 0 {
             GetLastError()?;
         }
+
+        SetLayeredWindowAttributes(hwnd_result, COLORREF(0), (255 as f32 * BAR_TRANSPARENCY) as u8, LWA_ALPHA)?;
 
         self.hwnd = hwnd_result;
         self.rect = Rect {
