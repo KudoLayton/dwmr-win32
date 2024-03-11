@@ -470,6 +470,11 @@ impl Monitor {
 
         Ok(())
     }
+
+    fn is_in_master_area(&self, x: i32, y: i32) -> bool {
+        let threshold = self.rect.x + ((self.rect.width as f32 * self.master_factor) as i32);
+        x < threshold
+    }
 }
 
 pub union Arg {
@@ -601,6 +606,7 @@ impl DwmrApp {
         self.event_hook.push(SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
         self.event_hook.push(SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
         self.event_hook.push(SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_DESTROY, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
+        self.event_hook.push(SetWinEventHook(EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZEEND, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
 
         self.grab_keys()?;
 
@@ -680,13 +686,13 @@ impl DwmrApp {
 
     unsafe fn window_event_hook (
         &mut self,
-        hwin_event_hook: HWINEVENTHOOK,
+        _hwin_event_hook: HWINEVENTHOOK,
         event: u32,
         hwnd: HWND,
-        id_object: i32,
-        id_child: i32,
-        id_event_thread: u32,
-        dwms_event_time: u32
+        _id_object: i32,
+        _id_child: i32,
+        _id_event_thread: u32,
+        _dwms_event_time: u32
     ) {
         match event {
             EVENT_SYSTEM_FOREGROUND => {
@@ -703,14 +709,125 @@ impl DwmrApp {
             EVENT_OBJECT_DESTROY => {
                 self.unmanage(&hwnd).unwrap();
             }
+            EVENT_SYSTEM_MOVESIZEEND => {
+                self.reallocate_window(&hwnd).unwrap();
+            }
             _ => ()
         }
     }
 
+    unsafe fn reallocate_window(&mut self, hwnd: &HWND) -> Result<()>
+    {
+        let mut original_window_rect = RECT::default();
+        let mut mouse_point: POINT = POINT::default();
+        GetCursorPos(&mut mouse_point)?;
+        GetWindowRect(hwnd.clone(), &mut original_window_rect)?;
+        let original_rect = Rect::from_win_rect(&original_window_rect);
+        // let center_x = original_rect.x + original_rect.width / 2;
+        // let center_y = original_rect.y + original_rect.height / 2;
+        
+        let mut contained_monitor_index: Option<usize> = None;
+        let mut found_monitor_index: Option<usize> = None;
+        let mut found_client_index: Option<usize> = None;
+        for (monitor_index, monitor) in self.monitors.iter().enumerate() {
+            let monitor_rect = &monitor.rect;
+            let left_check = monitor_rect.x <= mouse_point.x;
+            let right_check = mouse_point.x <= monitor_rect.x + monitor_rect.width;
+            let top_check = monitor_rect.y <= mouse_point.y;
+            let bottom_check = mouse_point.y <= monitor_rect.y + monitor_rect.height;
+
+            if left_check && right_check && top_check && bottom_check {
+                contained_monitor_index = Some(monitor_index);
+            }
+
+            for (client_index, client) in monitor.clients.iter().enumerate() {
+                let is_same_hwnd = client.hwnd == *hwnd;
+                if client.rect == original_rect && is_same_hwnd {
+                    return Ok(());
+                }
+
+                if is_same_hwnd {
+                    found_monitor_index = Some(monitor_index);
+                    found_client_index = Some(client_index);
+                    break;
+                }
+            }
+
+            if  contained_monitor_index.is_some() && 
+                found_monitor_index.is_some() &&
+                found_client_index.is_some() {
+                break;
+            }
+                    
+        }
+
+        if  found_monitor_index.is_none() || 
+            found_client_index.is_none()  ||
+            contained_monitor_index.is_none() {
+            return Ok(());
+        }
+
+        let contained_monitor_index = contained_monitor_index.unwrap();
+        let found_monitor_index = found_monitor_index.unwrap();
+        let found_client_index = found_client_index.unwrap();
+        let previous_master_threshold = (self.monitors[found_monitor_index].clients.len() as i32) - (self.monitors[found_monitor_index].master_count as i32);
+        let previous_is_in_master = (found_client_index as i32) >= previous_master_threshold ;
+        let is_in_master = self.monitors[contained_monitor_index].is_in_master_area(mouse_point.x, mouse_point.y);
+        let is_same_monitor = contained_monitor_index == found_monitor_index;
+        let is_in_same_area = previous_is_in_master == is_in_master;
+
+        if is_same_monitor && is_in_same_area {
+            self.monitors[found_monitor_index].arrangemon()?;
+            self.set_focus(*hwnd);
+            return Ok(());
+        }
+
+        let current_monitor = &self.monitors[found_monitor_index];
+        let current_monitor_visible_tags = current_monitor.tagset[current_monitor.selected_tag_index];
+        let mut next_focus_index = (found_client_index + 1) % current_monitor.clients.len();
+        while !Monitor::is_visible(&self.monitors[found_monitor_index].clients[next_focus_index], current_monitor_visible_tags)
+        {
+            next_focus_index += 1;
+            next_focus_index %= current_monitor.clients.len();
+        }
+
+        if found_client_index == next_focus_index {
+            self.monitors[found_monitor_index].selected_hwnd = HWND(0);
+        } else {
+            self.monitors[found_monitor_index].selected_hwnd = current_monitor.clients[next_focus_index].hwnd;
+        }
+
+        let mut client = self.monitors[found_monitor_index].clients[found_client_index].clone();
+        self.monitors[found_monitor_index].clients.remove(found_client_index);
+
+
+        let clients_count = self.monitors[contained_monitor_index].clients.len();
+        let master_count = self.monitors[contained_monitor_index].master_count as usize;
+        client.monitor = contained_monitor_index;
+        if !is_in_master && (master_count <= clients_count) {
+            self.monitors[contained_monitor_index].clients.insert(clients_count - master_count, client);
+        } else {
+            self.monitors[contained_monitor_index].clients.push(client);
+        }
+
+        self.arrange()?;
+        self.set_focus(*hwnd);
+
+        for monitor in self.monitors.iter_mut() {
+            let _result = RedrawWindow(monitor.bar.hwnd, None, None, RDW_INVALIDATE);
+        }
+        Ok(())
+    }
+
     fn set_focus(&mut self, hwnd: HWND)
     {
+        for monitor in self.monitors.iter_mut() {
+            monitor.bar.is_selected_monitor = false;
+        }
+
         if let Some(selected_monitor_index) = self.selected_monitor_index {
             if hwnd == self.monitors[selected_monitor_index].selected_hwnd {
+                self.monitors[selected_monitor_index].bar.is_selected_monitor = true;
                 return;
             }
         }
@@ -719,6 +836,7 @@ impl DwmrApp {
             for client in &monitor.clients {
                 if client.hwnd == hwnd {
                     self.selected_monitor_index = Some(monitor.index);
+                    monitor.bar.is_selected_monitor = true;
                     monitor.selected_hwnd = hwnd;
                     return;
                 }
@@ -1316,26 +1434,30 @@ impl DwmrApp {
             return Ok(());
         }
 
-        let mut new_focus_index = selected_client_index;
-        let mut left_offset = offset;
+        let mut new_focus_index = selected_client_index as i32;
+        let mut left_offset = -offset;
+        let clients_count = selected_monitor.clients.len() as i32;
+        let step = if offset < 0 { 1 } else { -1 } ;
         let selected_tag = selected_monitor.tagset[selected_monitor.selected_tag_index];
-        while left_offset > 0 {
-            left_offset -= 1;
-            new_focus_index += 1;
-            new_focus_index %= selected_monitor.clients.len();
+        while left_offset != 0 {
+            left_offset -= step;
+            new_focus_index += step;
+            new_focus_index %= clients_count;
+            new_focus_index += clients_count * (new_focus_index < 0) as i32;
 
-            while !Monitor::is_visible(&selected_monitor.clients[new_focus_index], selected_tag) {
-                new_focus_index += 1;
-                new_focus_index %= selected_monitor.clients.len();
+            while !Monitor::is_visible(&selected_monitor.clients[new_focus_index as usize], selected_tag) {
+                new_focus_index += step;
+                new_focus_index %= clients_count as i32;
+                new_focus_index += clients_count * (new_focus_index < 0) as i32;
             }
         }
 
         //let new_focus_index = Self::offset_to_new_index(clients_count, selected_client_index, offset);
-        if new_focus_index == selected_client_index {
+        if new_focus_index == (selected_client_index as i32) {
             return Ok(());
         }
 
-        let new_focus_hwnd = selected_monitor.clients[new_focus_index].hwnd;
+        let new_focus_hwnd = selected_monitor.clients[new_focus_index as usize].hwnd;
         selected_monitor.selected_hwnd = new_focus_hwnd;
         Self::focus(&new_focus_hwnd)?;
         Ok(())
