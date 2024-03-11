@@ -705,6 +705,8 @@ impl DwmrApp {
                 }
                 let client = self.manage(&hwnd).unwrap();
                 self.monitors[client.monitor].arrangemon().unwrap();
+                self.set_focus(hwnd);
+                self.refresh_bar().unwrap();
             }
             EVENT_OBJECT_DESTROY => {
                 self.unmanage(&hwnd).unwrap();
