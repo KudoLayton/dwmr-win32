@@ -77,6 +77,14 @@ impl Rect {
     }
 }
 
+impl PartialEq for Rect {
+    fn eq(&self, other: &Self) -> bool {
+        (self.x == other.x) && (self.y == other.y) && (self.width == other.width) && (self.height == other.height)
+    }
+}
+
+impl Eq for Rect {}
+
 #[derive(Default, Debug)]
 struct Bar {
     hwnd: HWND,
@@ -430,6 +438,21 @@ impl Monitor {
                 rect.height,
                 SET_WINDOW_POS_FLAGS(0)
             )?;
+
+            let mut result_rect = RECT::default();
+            GetWindowRect(client.hwnd, &mut result_rect)?;
+            let window_pos_result_rect = Rect::from_win_rect(&result_rect);
+            if window_pos_result_rect != rect {
+                SetWindowPos(
+                    client.hwnd,
+                    None,
+                    rect.x,
+                    rect.y,
+                    rect.width,
+                    rect.height,
+                    SET_WINDOW_POS_FLAGS(0)
+                )?;
+            }
 
             client.rect = rect.clone();
 
@@ -850,7 +873,8 @@ impl DwmrApp {
 
     unsafe fn refresh_current_focus(&mut self) -> Result<()> {
         let focus_hwnd = GetForegroundWindow();
-        let mut selected_index: Option<usize> = Some(0);
+        self.selected_monitor_index = Some(0);
+        let mut selected_index: Option<usize> = None;
         for (monitor_index, monitor) in self.monitors.iter_mut().enumerate() {
             for (index, client) in monitor.clients.iter().enumerate() {
                 if client.hwnd != focus_hwnd {
