@@ -636,10 +636,11 @@ impl DwmrApp {
     unsafe fn handle_message(&mut self, hwnd:HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
             WM_CLOSE => {
-                self.cleanup().unwrap();
+                DestroyWindow(self.hwnd).unwrap();
                 LRESULT::default()
             }
             WM_DESTROY => {
+                self.cleanup().unwrap();
                 PostQuitMessage(0);
                 LRESULT::default()
             }
@@ -950,6 +951,18 @@ impl DwmrApp {
 
         self.arrange()?;
         self.refresh_focus()?;
+        Ok(())
+    }
+
+    pub unsafe fn set_monitor_factor(&mut self, arg: &Option<Arg>) -> Result<()> {
+        if arg.is_none() {
+            return Ok(());
+        }
+
+        let factor_offset = arg.as_ref().unwrap().f;
+
+        self.monitors[self.selected_monitor_index.unwrap()].master_factor += factor_offset;
+        self.monitors[self.selected_monitor_index.unwrap()].arrangemon()?;
         Ok(())
     }
 
@@ -1276,7 +1289,7 @@ impl DwmrApp {
             UnregisterHotKey(self.hwnd, key_index as i32)?;
         }
 
-        DestroyWindow(self.hwnd)?;
+        //DestroyWindow(self.hwnd)?;
         self.hwnd = HWND::default();
 
         Ok(())
