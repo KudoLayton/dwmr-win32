@@ -477,6 +477,204 @@ impl Monitor {
     }
 }
 
+trait LayoutTrait {
+    unsafe fn arrange_layout(&self, monitor: &mut Monitor) -> Result<()>;
+    fn is_in_master_area(&self, monitor: &Monitor, x: i32, y: i32) -> bool;
+    unsafe fn resize(&self, hwnd: &HWND, rect: &Rect) -> Result<()> {
+        ShowWindow(*hwnd, SW_NORMAL);
+        SetWindowPos(
+            *hwnd,
+            None,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+            SET_WINDOW_POS_FLAGS(0)
+        )?;
+
+        let mut result_rect = RECT::default();
+        GetWindowRect(*hwnd, &mut result_rect)?;
+        let window_pos_result_rect = Rect::from_win_rect(&result_rect);
+        if window_pos_result_rect != *rect {
+            SetWindowPos(
+                *hwnd,
+                None,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                SET_WINDOW_POS_FLAGS(0)
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+enum Layout {
+    Tile(TileLayout),
+    Stack(StackLayout)
+}
+
+impl Layout {
+    fn unwrap(&self) -> &dyn LayoutTrait {
+        match self {
+            Layout::Tile(tile) => tile,
+            Layout::Stack(stack) => stack
+        }
+    }
+}
+
+impl Default for Layout {
+    fn default() -> Self {
+        Layout::Tile(TileLayout::default())
+    }
+}
+
+#[derive(Default, Debug)]
+struct TileLayout;
+
+impl LayoutTrait for TileLayout {
+    unsafe fn arrange_layout(&self, monitor: &mut Monitor) -> Result<()> {
+        let visible_tags = monitor.tagset[monitor.selected_tag_index];
+        let clients = &mut monitor.clients;
+
+        let mut tiled_count: u32 = 0;
+        for client in clients.iter() {
+            tiled_count += Monitor::is_tiled(client, visible_tags) as u32;
+        }
+
+        if tiled_count <= 0 {
+            return Ok(());
+        }
+
+        //let mut master_width = 0;
+        let mut master_y: u32 = 0;
+        let mut stack_y: u32 = 0;
+
+        let master_width = if tiled_count > monitor.master_count {
+            if monitor.master_count > 0 {
+                ((monitor.client_area.width as f32) * monitor.master_factor) as i32
+            } else {
+                0
+            }
+        } else {
+            monitor.rect.width
+        };
+
+        let mut index = 0;
+        for client in clients.iter_mut().rev() {
+            if !Monitor::is_tiled(client, visible_tags) {
+                continue;
+            }
+
+            let is_master = index < monitor.master_count as usize;
+            let rect = if is_master {
+                let height: u32 = (monitor.client_area.height as u32 - master_y) / (min(tiled_count, monitor.master_count) - (index as u32));
+                Rect {
+                    x: monitor.client_area.x,
+                    y: monitor.client_area.y + master_y as i32,
+                    width: master_width,
+                    height: height as i32
+                }
+            } else {
+                let height: u32 = (monitor.client_area.height as u32 - stack_y) / (tiled_count - (index as u32));
+                Rect {
+                    x: monitor.client_area.x + master_width as i32,
+                    y: monitor.client_area.y + stack_y as i32,
+                    width: monitor.client_area.width - master_width,
+                    height: height as i32
+                }
+            };
+            index += 1;
+            self.resize(&client.hwnd, &rect)?;
+            client.rect = rect.clone();
+
+            let next_y = (is_master as u32) * master_y + (!is_master as u32) * stack_y + rect.height as u32;
+            if next_y >= monitor.client_area.height as u32 {
+                continue;
+            }
+
+            if is_master  {
+                master_y += rect.height as u32;
+            } else{
+                stack_y += rect.height as u32;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn is_in_master_area(&self, monitor: &Monitor, x: i32, _y: i32) -> bool {
+        let threshold = monitor.rect.x + ((monitor.rect.width as f32 * monitor.master_factor) as i32);
+        x < threshold
+    }
+}
+
+#[derive(Default, Debug)]
+struct StackLayout;
+
+impl LayoutTrait for StackLayout {
+    unsafe fn arrange_layout(&self, monitor: &mut Monitor) -> Result<()> {
+        let visible_tags = monitor.tagset[monitor.selected_tag_index];
+        let clients = &mut monitor.clients;
+
+        let mut tiled_count: u32 = 0;
+        for client in clients.iter() {
+            tiled_count += Monitor::is_tiled(client, visible_tags) as u32;
+        }
+
+        if tiled_count <= 0 {
+            return Ok(());
+        }
+
+        //let mut master_y: u32 = 0;
+        let mut stack_y: u32 = 0;
+
+        let master_height = match (tiled_count > monitor.master_count, monitor.master_count > 0) {
+            (true, true) => ((monitor.client_area.height as f32) * monitor.master_factor) as i32,
+            (true, false) => 0,
+            (false, _) => monitor.client_area.width
+        };
+
+        let stack_height = monitor.client_area.height - master_height;
+
+        let mut index = 0;
+        for client in clients.iter_mut().rev() {
+            if !Monitor::is_tiled(client, visible_tags) {
+                continue;
+            }
+
+            let is_master = index < monitor.master_count as usize;
+
+            let height = if is_master {
+                (master_height as u32 - stack_y) / (min(tiled_count, monitor.master_count) - (index as u32))
+            } else {
+                (stack_height as u32 - stack_y) / (tiled_count - (index as u32))
+            };
+
+            let rect = Rect {
+                x: monitor.client_area.x,
+                y: monitor.client_area.y + stack_y as i32,
+                width: monitor.client_area.width,
+                height: height as i32
+            };
+
+            index += 1;
+            self.resize(&client.hwnd, &rect)?;
+            client.rect = rect.clone();
+
+            stack_y += rect.height as u32;
+        }
+        Ok(())
+    }
+
+    fn is_in_master_area(&self, monitor: &Monitor, _x: i32, y: i32) -> bool {
+        let threshold = monitor.rect.y + ((monitor.rect.height as f32 * monitor.master_factor) as i32);
+        y < threshold
+    }
+}
+
 pub union Arg {
     i: i32,
     ui: u32,
