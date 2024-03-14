@@ -6,7 +6,6 @@ use windows::{
         System::{
             Diagnostics::Debug::*, 
             Threading::*,
-            LibraryLoader::*,
         },
         Foundation::*,
         UI::{
@@ -17,7 +16,7 @@ use windows::{
         Graphics::{
             Dwm::*,
             Gdi::*,
-            Direct2D::{*, Common::{D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F}},
+            Direct2D::{*, Common::D2D1_ALPHA_MODE_PREMULTIPLIED},
             Dxgi::Common::*,
             DirectWrite::*,
         }
@@ -102,7 +101,7 @@ struct Bar {
 }
 
 impl Bar {
-    pub unsafe fn setup_bar(&mut self, display_rect: &Rect, hinstance: &HINSTANCE) -> Result<()> {
+    pub unsafe fn setup_bar(&mut self, display_rect: &Rect) -> Result<()> {
         let focus_hwnd = GetForegroundWindow();
 
         let hwnd_result = CreateWindowExW(
@@ -375,107 +374,6 @@ impl Monitor {
 
     unsafe fn is_tiled(client: &Client, visible_tags: u32) -> bool {
         (!client.is_floating) && Self::is_visible(client, visible_tags)
-    }
-
-    unsafe fn tile(&mut self) -> Result<()> {
-        let visible_tags = self.tagset[self.selected_tag_index];
-        let clients = &mut self.clients;
-
-        let mut tiled_count: u32 = 0;
-        for client in clients.iter() {
-            tiled_count += Self::is_tiled(client, visible_tags) as u32;
-        }
-
-        if tiled_count <= 0 {
-            return Ok(());
-        }
-
-        //let mut master_width = 0;
-        let mut master_y: u32 = 0;
-        let mut stack_y: u32 = 0;
-
-        let master_width = if tiled_count > self.master_count {
-            if self.master_count > 0 {
-                ((self.rect.width as f32) * self.master_factor) as i32
-            } else {
-                0
-            }
-        } else {
-            self.rect.width
-        };
-
-        let mut index = 0;
-        for client in clients.iter_mut().rev() {
-            if !Self::is_tiled(client, visible_tags) {
-                continue;
-            }
-
-            let is_master = index < self.master_count as usize;
-            let rect = if is_master {
-                let height: u32 = (self.client_area.height as u32 - master_y) / (min(tiled_count, self.master_count) - (index as u32));
-                Rect {
-                    x: self.client_area.x,
-                    y: self.client_area.y + master_y as i32,
-                    width: master_width,
-                    height: height as i32
-                }
-            } else {
-                let height: u32 = (self.client_area.height as u32 - stack_y) / (tiled_count - (index as u32));
-                Rect {
-                    x: self.client_area.x + master_width as i32,
-                    y: self.client_area.y + stack_y as i32,
-                    width: self.client_area.width - master_width,
-                    height: height as i32
-                }
-            };
-            index += 1;
-
-            ShowWindow(client.hwnd, SW_NORMAL);
-            SetWindowPos(
-                client.hwnd,
-                None,
-                rect.x,
-                rect.y,
-                rect.width,
-                rect.height,
-                SET_WINDOW_POS_FLAGS(0)
-            )?;
-
-            let mut result_rect = RECT::default();
-            GetWindowRect(client.hwnd, &mut result_rect)?;
-            let window_pos_result_rect = Rect::from_win_rect(&result_rect);
-            if window_pos_result_rect != rect {
-                SetWindowPos(
-                    client.hwnd,
-                    None,
-                    rect.x,
-                    rect.y,
-                    rect.width,
-                    rect.height,
-                    SET_WINDOW_POS_FLAGS(0)
-                )?;
-            }
-
-            client.rect = rect.clone();
-
-            let next_y = (is_master as u32) * master_y + (!is_master as u32) * stack_y + rect.height as u32;
-            if next_y >= self.client_area.height as u32 {
-                continue;
-            }
-
-            if is_master  {
-                master_y += rect.height as u32;
-            } else{
-                stack_y += rect.height as u32;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn is_in_master_area(&self, x: i32, y: i32) -> bool {
-        let threshold = self.rect.x + ((self.rect.width as f32 * self.master_factor) as i32);
-        x < threshold
     }
 }
 
@@ -972,9 +870,10 @@ impl DwmrApp {
         let contained_monitor_index = contained_monitor_index.unwrap();
         let found_monitor_index = found_monitor_index.unwrap();
         let found_client_index = found_client_index.unwrap();
-        let previous_master_threshold = (self.monitors[found_monitor_index].clients.len() as i32) - (self.monitors[found_monitor_index].master_count as i32);
+        let found_monitor = &self.monitors[found_monitor_index];
+        let previous_master_threshold = (found_monitor.clients.len() as i32) - (found_monitor.master_count as i32);
         let previous_is_in_master = (found_client_index as i32) >= previous_master_threshold ;
-        let is_in_master = self.monitors[contained_monitor_index].is_in_master_area(mouse_point.x, mouse_point.y);
+        let is_in_master = found_monitor.layout.unwrap().is_in_master_area(found_monitor, mouse_point.x, mouse_point.y);
         let is_same_monitor = contained_monitor_index == found_monitor_index;
         let is_in_same_area = previous_is_in_master == is_in_master;
 
@@ -1077,7 +976,7 @@ impl DwmrApp {
         Ok(())
     }
 
-    unsafe extern "system" fn update_geom(hmonitor: HMONITOR, _: HDC, rect: *mut RECT, lparam: LPARAM) -> BOOL {
+    unsafe extern "system" fn update_geom(hmonitor: HMONITOR, _: HDC, _: *mut RECT, lparam: LPARAM) -> BOOL {
         let mut monitor_info = MONITORINFOEXW{
             monitorInfo: MONITORINFO {
                 cbSize: std::mem::size_of::<MONITORINFOEXW>() as u32,
@@ -1108,11 +1007,9 @@ impl DwmrApp {
         monitor.client_area.height -= BAR_HEIGHT as i32;
         monitor.bar.selected_tags = 1;
 
-        let hmodule = GetModuleHandleW(None).unwrap();
-        let hinstance: HINSTANCE = hmodule.into();
         let display_rect = monitor.rect.clone();
         (*this).monitors.push(monitor);
-        (*this).monitors.last_mut().as_mut().unwrap().bar.setup_bar(&display_rect, &hinstance).unwrap();
+        (*this).monitors.last_mut().as_mut().unwrap().bar.setup_bar(&display_rect).unwrap();
         TRUE
     }
 
@@ -1294,6 +1191,10 @@ impl DwmrApp {
     }
 
     unsafe fn is_manageable(hwnd: &HWND) -> Result<bool> {
+        if IsWindow(*hwnd) == FALSE {
+            return Ok(false);
+        }
+
         let style = GetWindowLongW(*hwnd, GWL_STYLE) as u32;
         if has_flag!(style, WS_DISABLED.0) {
             return Ok(false);
