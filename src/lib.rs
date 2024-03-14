@@ -318,13 +318,15 @@ struct Monitor {
     clients: Vec<Client>, // Reversed order
     tagset: [u32; 2],
     selected_tag_index: usize,
-    bar: Bar
+    bar: Bar,
+    layout: Layout,
 }
 
 impl Monitor {
     unsafe fn arrangemon(&mut self) -> Result<()> {
         self.show_hide()?;
-        self.tile()?;
+        let layout = self.layout.clone();
+        layout.unwrap().arrange_layout(self)?;
         Ok(())
     }
 
@@ -510,7 +512,7 @@ trait LayoutTrait {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 enum Layout {
     Tile(TileLayout),
     Stack(StackLayout)
@@ -531,7 +533,7 @@ impl Default for Layout {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone, Copy)]
 struct TileLayout;
 
 impl LayoutTrait for TileLayout {
@@ -548,7 +550,6 @@ impl LayoutTrait for TileLayout {
             return Ok(());
         }
 
-        //let mut master_width = 0;
         let mut master_y: u32 = 0;
         let mut stack_y: u32 = 0;
 
@@ -611,7 +612,7 @@ impl LayoutTrait for TileLayout {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone, Copy)]
 struct StackLayout;
 
 impl LayoutTrait for StackLayout {
@@ -628,16 +629,15 @@ impl LayoutTrait for StackLayout {
             return Ok(());
         }
 
-        //let mut master_y: u32 = 0;
         let mut stack_y: u32 = 0;
 
         let master_height = match (tiled_count > monitor.master_count, monitor.master_count > 0) {
             (true, true) => ((monitor.client_area.height as f32) * monitor.master_factor) as i32,
             (true, false) => 0,
-            (false, _) => monitor.client_area.width
+            (false, _) => monitor.client_area.height
         };
 
-        let stack_height = monitor.client_area.height - master_height;
+        //let stack_height = monitor.client_area.height - master_height;
 
         let mut index = 0;
         for client in clients.iter_mut().rev() {
@@ -650,7 +650,7 @@ impl LayoutTrait for StackLayout {
             let height = if is_master {
                 (master_height as u32 - stack_y) / (min(tiled_count, monitor.master_count) - (index as u32))
             } else {
-                (stack_height as u32 - stack_y) / (tiled_count - (index as u32))
+                (monitor.client_area.height as u32 - stack_y) / (tiled_count - (index as u32))
             };
 
             let rect = Rect {
@@ -670,7 +670,7 @@ impl LayoutTrait for StackLayout {
     }
 
     fn is_in_master_area(&self, monitor: &Monitor, _x: i32, y: i32) -> bool {
-        let threshold = monitor.rect.y + ((monitor.rect.height as f32 * monitor.master_factor) as i32);
+        let threshold = monitor.client_area.y + ((monitor.client_area.height as f32 * monitor.master_factor) as i32);
         y < threshold
     }
 }
@@ -678,7 +678,8 @@ impl LayoutTrait for StackLayout {
 pub union Arg {
     i: i32,
     ui: u32,
-    f: f32
+    f: f32,
+    l: Layout
 }
 
 pub struct Key {
@@ -1767,6 +1768,18 @@ impl DwmrApp {
 
         self.refresh_focus()?;
         self.refresh_bar()?;
+        Ok(())
+    }
+
+    pub unsafe fn set_layout(&mut self, arg: &Option<Arg>) -> Result<()> {
+        if arg.is_none() {
+            return Ok(());
+        }
+
+        let monitor = &mut self.monitors[self.selected_monitor_index.unwrap()];
+        monitor.layout = arg.as_ref().unwrap().l;
+        monitor.arrangemon()?;
+        self.refresh_focus()?;
         Ok(())
     }
 }
