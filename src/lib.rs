@@ -792,6 +792,10 @@ impl DwmrApp {
         _id_event_thread: u32,
         _dwms_event_time: u32
     ) {
+        if IsWindow(hwnd) == FALSE {
+            return;
+        }
+
         match event {
             EVENT_SYSTEM_FOREGROUND => {
                 self.set_focus(hwnd);
