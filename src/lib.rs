@@ -1736,5 +1736,19 @@ impl DwmrApp {
         self.refresh_focus()?;
         Ok(())
     }
+
+    pub unsafe fn toggle_float(&mut self, _arg: &Option<Arg>) -> Result<()> {
+        let selected_monitor = &self.monitors[self.selected_monitor_index.unwrap()];
+        let selected_index = selected_monitor.get_selected_client_index();
+        if selected_index.is_none() {
+            return Ok(());
+        }
+
+        let selected_client = &mut self.monitors[self.selected_monitor_index.unwrap()].clients[selected_index.unwrap()];
+        selected_client.is_floating = !selected_client.is_floating;
+        self.arrange()?;
+        self.refresh_focus()?;
+        Ok(())
+    }
 }
 
