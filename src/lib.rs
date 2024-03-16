@@ -640,6 +640,11 @@ lazy_static! {
         "Static".to_string(),
         "Scrollbar".to_string(),
         "Progman".to_string(),
+        "OleMainThreadWndClass".to_string(),
+        "Xaml_WindowedPopupClass".to_string(),
+        "LivePreview".to_string(),
+        "TaskListOverlayWnd".to_string(),
+        "Shell_TrayWnd".to_string(),
     ]);
 
 }
