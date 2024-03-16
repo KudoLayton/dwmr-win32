@@ -792,11 +792,16 @@ impl DwmrApp {
         _hwin_event_hook: HWINEVENTHOOK,
         event: u32,
         hwnd: HWND,
-        _id_object: i32,
-        _id_child: i32,
+        id_object: i32,
+        id_child: i32,
         _id_event_thread: u32,
         _dwms_event_time: u32
     ) {
+        let is_target = (id_object == OBJID_WINDOW.0) && (id_child == CHILDID_SELF as i32);
+        if !is_target {
+            return;
+        }
+
         if IsWindow(hwnd) == FALSE {
             return;
         }
