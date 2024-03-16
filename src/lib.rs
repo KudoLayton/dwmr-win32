@@ -712,9 +712,10 @@ impl DwmrApp {
         self.wallpaper_hwnd = wallpaper_hwnd;
 
         self.event_hook.push(SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
-        self.event_hook.push(SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
+        self.event_hook.push(SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
         self.event_hook.push(SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_DESTROY, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
         self.event_hook.push(SetWinEventHook(EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZEEND, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
+        self.event_hook.push(SetWinEventHook(EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
 
         self.grab_keys()?;
 
@@ -825,7 +826,7 @@ impl DwmrApp {
                 self.set_focus(hwnd);
                 self.refresh_bar().unwrap();
             }
-            EVENT_OBJECT_SHOW => {
+            EVENT_OBJECT_UNCLOAKED | EVENT_OBJECT_SHOW => {
                 if !Self::is_manageable(&hwnd).unwrap() {
                     return;
                 }
@@ -834,7 +835,7 @@ impl DwmrApp {
                 self.set_focus(hwnd);
                 self.refresh_bar().unwrap();
             }
-            EVENT_OBJECT_DESTROY => {
+            EVENT_OBJECT_CLOAKED | EVENT_OBJECT_HIDE | EVENT_OBJECT_DESTROY => {
                 self.unmanage(&hwnd).unwrap();
             }
             EVENT_SYSTEM_MOVESIZEEND => {
