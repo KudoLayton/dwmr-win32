@@ -323,7 +323,6 @@ struct Monitor {
 
 impl Monitor {
     unsafe fn arrangemon(&mut self) -> Result<()> {
-        self.sanitize_clients()?;
         self.show_hide()?;
         let layout = self.layout.clone();
         layout.unwrap().arrange_layout(self)?;
@@ -755,6 +754,7 @@ impl DwmrApp {
                 LRESULT::default()
             }
             WM_HOTKEY => {
+                self.sanitize_monitors().unwrap();
                 let tag_keys_sub_len = TAG_KEYS.first().unwrap().len();
                 let tag_keys_len = TAG_KEYS.len() * tag_keys_sub_len;
                 if wparam.0 < KEYS.len(){
@@ -828,6 +828,9 @@ impl DwmrApp {
         if is_disallowed_title || is_disallowed_class {
             return;
         }
+
+        self.sanitize_monitors().unwrap();
+
         match event {
             EVENT_SYSTEM_FOREGROUND => {
                 let is_new_clinet = !self.monitors.iter().any(|monitor| -> bool {monitor.clients.iter().any(|client| -> bool {client.hwnd == hwnd})});
@@ -858,6 +861,14 @@ impl DwmrApp {
             }
             _ => ()
         }
+    }
+
+    unsafe fn sanitize_monitors(&mut self) -> Result<()>
+    {
+        for monitor in self.monitors.iter_mut() {
+            monitor.sanitize_clients()?;
+        }
+        Ok(())
     }
 
     unsafe fn reallocate_window(&mut self, hwnd: &HWND) -> Result<()>
