@@ -334,10 +334,12 @@ impl Monitor {
             let is_visible = Self::is_visible(client, self.tagset[self.selected_tag_index]);
             let is_window_visible = IsWindowVisible(client.hwnd) == TRUE;
             if is_visible && !is_window_visible {
+                client.is_hide = false;
                 ShowWindow(client.hwnd, SW_NORMAL);
             }
 
             if !is_visible && is_window_visible {
+                client.is_hide = true;
                 ShowWindow(client.hwnd, SW_HIDE);
             }
         }
@@ -609,6 +611,7 @@ struct Client {
     is_fixed: bool,
     is_urgent: bool,
     is_cloaked: bool,
+    is_hide: bool,
     monitor: usize,
 }
 
@@ -822,6 +825,7 @@ impl DwmrApp {
         GetClassNameW(hwnd, class_name_buf.as_mut());
         let class_name = PCWSTR::from_raw(class_name_buf.as_ptr()).to_string().unwrap();
         SetLastError(WIN32_ERROR(0));
+
         let is_disallowed_title = DISALLOWED_TITLE.contains(&client_name);
         let is_disallowed_class = DISALLOWED_CLASS.contains(&class_name);
 
@@ -845,18 +849,35 @@ impl DwmrApp {
                 self.refresh_bar().unwrap();
             }
             EVENT_OBJECT_UNCLOAKED | EVENT_OBJECT_SHOW => {
-                if !Self::is_manageable(&hwnd).unwrap() {
-                    return;
+                let is_new_clinet = !self.monitors.iter().any(|monitor| -> bool {monitor.clients.iter().any(|client| -> bool {client.hwnd == hwnd})});
+                if is_new_clinet {
+                    if !Self::is_manageable(&hwnd).unwrap() {
+                        return;
+                    }
+                    let client = self.manage(&hwnd).unwrap();
+                    self.monitors[client.monitor].arrangemon().unwrap();
                 }
-                let client = self.manage(&hwnd).unwrap();
-                self.monitors[client.monitor].arrangemon().unwrap();
                 self.set_focus(hwnd);
                 self.refresh_bar().unwrap();
             }
-            EVENT_OBJECT_CLOAKED | EVENT_OBJECT_HIDE | EVENT_OBJECT_DESTROY => {
+            EVENT_OBJECT_CLOAKED | EVENT_OBJECT_DESTROY => {
+                self.unmanage(&hwnd).unwrap();
+            }
+            EVENT_OBJECT_HIDE => {
+                if self.monitors.iter().any(|monitor| -> bool {monitor.clients.iter().any(|client| -> bool {client.hwnd == hwnd && client.is_hide})}) {
+                    return;
+                }
                 self.unmanage(&hwnd).unwrap();
             }
             EVENT_SYSTEM_MOVESIZEEND => {
+                let is_new_clinet = !self.monitors.iter().any(|monitor| -> bool {monitor.clients.iter().any(|client| -> bool {client.hwnd == hwnd})});
+                if is_new_clinet {
+                    if !Self::is_manageable(&hwnd).unwrap() {
+                        return;
+                    }
+                    let client = self.manage(&hwnd).unwrap();
+                    self.monitors[client.monitor].arrangemon().unwrap();
+                }
                 self.reallocate_window(&hwnd).unwrap();
             }
             _ => ()
@@ -1336,9 +1357,9 @@ impl DwmrApp {
     unsafe fn manage(&mut self, hwnd: &HWND) -> Result<Client> {
         for monitor in self.monitors.iter() {
             for client in monitor.clients.iter() {
-            if client.hwnd == *hwnd {
-                return Ok(client.clone());
-            }
+                if client.hwnd == *hwnd {
+                    return Ok(client.clone());
+                }
             }
         }
 
