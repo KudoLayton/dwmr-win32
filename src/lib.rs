@@ -651,6 +651,7 @@ lazy_static! {
         "LivePreview".to_string(),
         "TaskListOverlayWnd".to_string(),
         "Shell_TrayWnd".to_string(),
+        "TopLevelWindowForOverflowXamlIsland".to_string(),
     ]);
 
 }
