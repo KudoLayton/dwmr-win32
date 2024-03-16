@@ -323,6 +323,7 @@ struct Monitor {
 
 impl Monitor {
     unsafe fn arrangemon(&mut self) -> Result<()> {
+        self.sanitize_clients()?;
         self.show_hide()?;
         let layout = self.layout.clone();
         layout.unwrap().arrange_layout(self)?;
@@ -374,6 +375,11 @@ impl Monitor {
 
     unsafe fn is_tiled(client: &Client, visible_tags: u32) -> bool {
         (!client.is_floating) && Self::is_visible(client, visible_tags)
+    }
+
+    pub unsafe fn sanitize_clients(&mut self) -> Result<()> {
+        self.clients.retain(|client| IsWindow(client.hwnd) == TRUE);
+        Ok(())
     }
 }
 
