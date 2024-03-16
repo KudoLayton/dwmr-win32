@@ -878,8 +878,6 @@ impl DwmrApp {
         GetCursorPos(&mut mouse_point)?;
         GetWindowRect(hwnd.clone(), &mut original_window_rect)?;
         let original_rect = Rect::from_win_rect(&original_window_rect);
-        // let center_x = original_rect.x + original_rect.width / 2;
-        // let center_y = original_rect.y + original_rect.height / 2;
         
         let mut contained_monitor_index: Option<usize> = None;
         let mut found_monitor_index: Option<usize> = None;
