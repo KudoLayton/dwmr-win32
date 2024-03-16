@@ -798,6 +798,14 @@ impl DwmrApp {
 
         match event {
             EVENT_SYSTEM_FOREGROUND => {
+                let is_new_clinet = !self.monitors.iter().any(|monitor| -> bool {monitor.clients.iter().any(|client| -> bool {client.hwnd == hwnd})});
+                if is_new_clinet {
+                    if !Self::is_manageable(&hwnd).unwrap() {
+                        return;
+                    }
+                    let client = self.manage(&hwnd).unwrap();
+                    self.monitors[client.monitor].arrangemon().unwrap();
+                }
                 self.set_focus(hwnd);
                 self.refresh_bar().unwrap();
             }
