@@ -817,7 +817,6 @@ impl DwmrApp {
         let mut client_name_buf = [0u16; 256];
         GetWindowTextW(hwnd, client_name_buf.as_mut());
         let client_name = PCWSTR::from_raw(client_name_buf.as_ptr()).to_string().unwrap();
-        SetLastError(WIN32_ERROR(0));
 
         let mut class_name_buf = [0u16; 256];
         GetClassNameW(hwnd, class_name_buf.as_mut());
