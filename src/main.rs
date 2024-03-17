@@ -1,3 +1,4 @@
+#![windows_subsystem = "windows"]
 use dwmr_win32::*;
 use windows::{
     core::*,
