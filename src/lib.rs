@@ -723,12 +723,14 @@ impl DwmrApp {
             GetLastError()?;
         }
 
+        let cursor = LoadCursorW(None, IDC_ARROW)?;
         let bar_wnd_class = WNDCLASSEXW {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: Some(Bar::bar_wnd_proc),
             hInstance: *hinstance,
             lpszClassName: W_BAR_NAME.clone(),
             hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as isize),
+            hCursor: cursor,
             ..Default::default()
         };
 
