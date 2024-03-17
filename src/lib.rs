@@ -1501,7 +1501,6 @@ impl DwmrApp {
             UnregisterHotKey(self.hwnd, key_index as i32)?;
         }
 
-        //DestroyWindow(self.hwnd)?;
         self.hwnd = HWND::default();
 
         Ok(())
@@ -1679,7 +1678,6 @@ impl DwmrApp {
             }
         }
 
-        //let new_focus_index = Self::offset_to_new_index(clients_count, selected_client_index, offset);
         if new_focus_index == (selected_client_index as i32) {
             return Ok(());
         }
