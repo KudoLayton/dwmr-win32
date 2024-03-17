@@ -50,9 +50,6 @@ To customize your dwm experience, modify the `src/config.rs` file. This allows f
 
 Launch the compiled executable to start enjoying a minimalist and efficient window management experience with dwmr-win32 on your Windows environment.
 
-## Contributing
-
-We welcome contributions! If you're interested in helping improve dwmr-win32, please feel free to submit pull requests or open issues for bugs and feature suggestions.
 
 ## License
 
