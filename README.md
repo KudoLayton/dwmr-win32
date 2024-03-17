@@ -39,6 +39,32 @@ cd dwmr-win32
 cargo build --release
 ```
 
+## Default Keybindings
+
+dwmr-win32 offers a variety of keybindings to efficiently manage windows, workspaces, and the application itself. The default modifier key is set to `ALT`. Here's a summary of the essential keybindings:
+
+### Window Management
+- **ALT + J/K**: Focus the next/previous window.
+- **ALT + F**: Toggle floating mode for the active window.
+- **ALT + T**: Set the layout to tiling.
+- **ALT + S**: Set the layout to vertical stacking.
+
+### Tag Management
+- **ALT + [1-9]**: View tag (workspace) [1-9].
+- **ALT + SHIFT + [1-9]**: Assign the active window to tag [1-9].
+- **ALT + CTRL + [1-9]**: Toggle the view of tag [1-9].
+- **ALT + CTRL + SHIFT + [1-9]**: Toggle the assigned tag of the active window.
+
+### Monitor Management
+- **ALT + H/L**: Focus the next/previous monitor.
+- **ALT + SHIFT + H/L**: Move the active window to the next/previous monitor.
+- **ALT + I/D**: Increase/decrease the size of the master area.
+
+### Application
+- **ALT + Q**: Quit dwmr-win32.
+- **ALT + Z**: Zoom (toggle the master area between the active window and the previous one).
+
+These keybindings are defined in the `src/config.rs` file and can be customized to suit your preferences.
 
 ### Configuration
 
