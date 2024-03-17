@@ -948,18 +948,19 @@ impl DwmrApp {
                 contained_monitor_index = Some(monitor_index);
             }
 
-            for (client_index, client) in monitor.clients.iter().enumerate() {
-                let is_same_hwnd = client.hwnd == *hwnd;
-                if client.rect == original_rect && is_same_hwnd {
-                    return Ok(());
-                }
-
-                if is_same_hwnd {
-                    found_monitor_index = Some(monitor_index);
-                    found_client_index = Some(client_index);
-                    break;
-                }
+            let client_index = monitor.find_client_index(hwnd);
+            if client_index.is_none() {
+                continue;
             }
+
+            let client_index = client_index.unwrap();
+
+            if monitor.clients[client_index].rect == original_rect {
+                return Ok(());
+            }
+
+            found_monitor_index = Some(monitor_index);
+            found_client_index = Some(client_index);
 
             if  contained_monitor_index.is_some() && 
                 found_monitor_index.is_some() &&
@@ -978,6 +979,7 @@ impl DwmrApp {
         let contained_monitor_index = contained_monitor_index.unwrap();
         let found_monitor_index = found_monitor_index.unwrap();
         let found_client_index = found_client_index.unwrap();
+
         let found_monitor = &self.monitors[found_monitor_index];
         let previous_master_threshold = (found_monitor.clients.len() as i32) - (found_monitor.master_count as i32);
         let previous_is_in_master = (found_client_index as i32) >= previous_master_threshold ;
@@ -1042,14 +1044,14 @@ impl DwmrApp {
         }
 
         for monitor in self.monitors.iter_mut() {
-            for client in &monitor.clients {
-                if client.hwnd == hwnd {
-                    self.selected_monitor_index = Some(monitor.index);
-                    monitor.bar.is_selected_monitor = true;
-                    monitor.selected_hwnd = hwnd;
-                    return;
-                }
+            if monitor.find_client_index(&hwnd).is_none() {
+                continue;
             }
+
+            self.selected_monitor_index = Some(monitor.index);
+            monitor.bar.is_selected_monitor = true;
+            monitor.selected_hwnd = hwnd;
+            return;
         } 
     }
 
@@ -1126,28 +1128,30 @@ impl DwmrApp {
             return Ok(());
         }
 
-        let found_index: Option<usize> = self.monitors[client.monitor].clients.iter().position(|c| c.hwnd == client.hwnd);
+        let found_index: Option<usize> = self.monitors[client.monitor].find_client_index(&client.hwnd);
 
         if found_index.is_none() {
             return Ok(());
         }
 
+        let found_index = found_index.unwrap();
+
         let current_monitor = &self.monitors[client.monitor];
         let current_monitor_visible_tags = current_monitor.tagset[current_monitor.selected_tag_index];
-        let mut next_focus_index = (found_index.unwrap() + 1) % current_monitor.clients.len();
+        let mut next_focus_index = (found_index + 1) % current_monitor.clients.len();
         while !Monitor::is_visible(&self.monitors[client.monitor].clients[next_focus_index], current_monitor_visible_tags)
         {
             next_focus_index += 1;
             next_focus_index %= current_monitor.clients.len();
         }
 
-        if found_index.unwrap() == next_focus_index {
+        if found_index == next_focus_index {
             self.monitors[client.monitor].selected_hwnd = HWND(0);
         } else {
             self.monitors[client.monitor].selected_hwnd = current_monitor.clients[next_focus_index].hwnd;
         }
 
-        self.monitors[client.monitor].clients.remove(found_index.unwrap());
+        self.monitors[client.monitor].clients.remove(found_index);
 
         let mut new_client = client;
         new_client.monitor = target_monitor_index;
@@ -1211,23 +1215,13 @@ impl DwmrApp {
     unsafe fn refresh_current_focus(&mut self) -> Result<()> {
         let focus_hwnd = GetForegroundWindow();
         self.selected_monitor_index = Some(0);
-        let mut selected_index: Option<usize> = None;
         for (monitor_index, monitor) in self.monitors.iter_mut().enumerate() {
-            for (index, client) in monitor.clients.iter().enumerate() {
-                if client.hwnd != focus_hwnd {
-                    continue;
-                }
-
-                self.selected_monitor_index = Some(monitor_index);
-                monitor.selected_hwnd = focus_hwnd;
-                selected_index = Some(index);
-                break;
-            }
-
-            if selected_index.is_none() {
+            if monitor.find_client_index(&focus_hwnd).is_none() {
                 continue;
             }
 
+            self.selected_monitor_index = Some(monitor_index);
+            monitor.selected_hwnd = focus_hwnd;
             break;
         }
         self.refresh_bar()?;
@@ -1512,13 +1506,7 @@ impl DwmrApp {
 
     unsafe fn unmanage(&mut self, hwnd: &HWND) -> Result<()> {
         for monitor in self.monitors.iter_mut() {
-            let mut found_index: Option<usize> = None;
-            for (index, client) in monitor.clients.iter().enumerate() {
-                if client.hwnd == *hwnd {
-                    found_index = Some(index);
-                    break;
-                }
-            }
+            let found_index = monitor.find_client_index(hwnd);
 
             if let Some(index) = found_index {
                 monitor.clients.remove(index);
