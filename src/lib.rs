@@ -5,7 +5,8 @@ use windows::{
         UI::HiDpi::*,
         System::{
             Diagnostics::Debug::*, 
-            Threading::*,
+            Threading::*, 
+            ProcessStatus::*,
         },
         Foundation::*,
         UI::{
@@ -1393,6 +1394,36 @@ impl DwmrApp {
                 monitor_index = index;
             }
         }
+
+        let get_name = || -> Result<String> {
+            let mut process_id: u32 = 0;
+            if GetWindowThreadProcessId(*hwnd, Some(&mut process_id as *mut _)) == 0 {
+                if let Err(e) = GetLastError() {
+                    println!("Error: Failed to get process id - {}", e);
+                    return Err(e);
+                }
+                return Ok(String::default());
+            }
+
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+            if let Err(e) = handle {
+                println!("Error: Failed to open process handle - {}", e);
+                return Err(e);
+            }
+
+            let handle = handle.unwrap();
+            let mut file_name_buf = [0u16; 256];
+            if GetProcessImageFileNameW(handle, &mut file_name_buf) == 0 {
+                if let Err(e) = GetLastError() {
+                    println!("Error: Failed to get file name - {}", e);
+                }
+            }
+            let file_name = PCWSTR::from_raw(file_name_buf.as_ptr()).to_string().unwrap();
+            CloseHandle(handle)?;
+            return Ok(file_name);
+        };
+
+        let process_file_name = get_name().unwrap_or_default();
 
         let client = Client {
             hwnd: *hwnd,
