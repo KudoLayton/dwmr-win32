@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
 use super::*;
 
@@ -36,7 +38,12 @@ pub const BAR_COLOR_UNSELECTED_TEXT :D2D1_COLOR_F   = D2D1_COLOR_F{ r: 155.0 / 2
 pub const BAR_COLOR_SELECTED_TEXT   :D2D1_COLOR_F   = D2D1_COLOR_F{ r: 217.0 / 255.0, g: 225.0 / 255.0, b: 232.0 / 255.0, a: 1.0 };
 
 lazy_static! {
-     pub static ref TAG_KEYS: [[Key; 4]; 9] = [
+    pub static ref RULES: [Rule; 2] = [
+        Rule{title: None,       class: None,        process_filename: Some("KakaoTalk".to_string()),         is_floating: true,      tags: 1 << 0},
+        Rule{title: None,       class: None,        process_filename: Some("steamapps".to_string()),         is_floating: true,      tags: 1 << 0},
+    ];
+
+    pub static ref TAG_KEYS: [[Key; 4]; 9] = [
         tag_keys!('1', 0),
         tag_keys!('2', 1),
         tag_keys!('3', 2),

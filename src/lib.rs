@@ -597,8 +597,11 @@ pub struct Key {
 
 
 #[derive(Default, Clone, Debug)]
-struct Client {
+pub struct Client {
     hwnd: HWND,
+    title: String,
+    class: String,
+    process_filename: String,
     parent: HWND,
     root: HWND,
     rect: Rect,
@@ -614,6 +617,31 @@ struct Client {
     is_cloaked: bool,
     is_hide: bool,
     monitor: usize,
+}
+
+pub struct Rule {
+    title: Option<String>,
+    class: Option<String>,
+    process_filename: Option<String>,
+    is_floating: bool,
+    tags: u32
+}
+
+impl Rule {
+    pub fn is_match(&self, client: &Client) -> bool {
+        if self.title.is_some() && self.title.as_ref().unwrap() != &client.title {
+            return false;
+        }
+
+        if self.class.is_some() && self.class.as_ref().unwrap() != &client.class {
+            return false;
+        }
+
+        if self.process_filename.is_some() && !client.process_filename.contains(self.process_filename.as_ref().unwrap()) {
+            return false;
+        }
+        true
+    }
 }
 
 #[derive(Default, Debug)]
@@ -1297,7 +1325,9 @@ impl DwmrApp {
         let mut client_name_buf = [0u16; 256];
         SetLastError(WIN32_ERROR(0));
         if GetWindowTextW(*hwnd, client_name_buf.as_mut()) == 0 {
-            GetLastError()?;
+            if let Err(e) = GetLastError() {
+                println!("Error: failed to get window title - {e}");
+            }
         }
         let client_name = PCWSTR::from_raw(client_name_buf.as_ptr()).to_string().unwrap();
         if DISALLOWED_TITLE.contains(&client_name) {
@@ -1402,7 +1432,25 @@ impl DwmrApp {
             }
         }
 
-        let get_name = || -> Result<String> {
+        let mut client_name_buf = [0u16; 256];
+        SetLastError(WIN32_ERROR(0));
+        if GetWindowTextW(*hwnd, client_name_buf.as_mut()) == 0 {
+            if let Err(e) = GetLastError() {
+                println!("Error: failed to get window title - {e}");
+            }
+        }
+        let title = PCWSTR::from_raw(client_name_buf.as_ptr()).to_string().unwrap();
+
+        let mut class_name_buf = [0u16; 256];
+        SetLastError(WIN32_ERROR(0));
+        if GetClassNameW(*hwnd, class_name_buf.as_mut()) == 0 {
+            if let Err(e) = GetLastError() {
+                println!("Error: failed to get class name - {e}");
+            }
+        }
+        let class = PCWSTR::from_raw(class_name_buf.as_ptr()).to_string().unwrap();
+
+        let get_processname = || -> Result<String> {
             let mut process_id: u32 = 0;
             if GetWindowThreadProcessId(*hwnd, Some(&mut process_id as *mut _)) == 0 {
                 if let Err(e) = GetLastError() {
@@ -1430,10 +1478,13 @@ impl DwmrApp {
             return Ok(file_name);
         };
 
-        let process_file_name = get_name().unwrap_or_default();
+        let process_filename = get_processname().unwrap_or_default();
 
-        let client = Client {
+        let mut client = Client {
             hwnd: *hwnd,
+            title,
+            class,
+            process_filename,
             parent,
             root,
             rect: rect.into(),
@@ -1444,6 +1495,15 @@ impl DwmrApp {
             tags: 1,
             ..Default::default()
         };
+
+        for rule in RULES.iter() {
+            if rule.is_match(&client) {
+                client.is_floating = rule.is_floating;
+                client.tags = rule.tags;
+                break;
+            }
+        }
+
         self.monitors[monitor_index].clients.push(client.clone());
 
         Ok(client)
