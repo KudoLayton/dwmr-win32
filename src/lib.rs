@@ -56,7 +56,6 @@ const W_BAR_NAME: PCWSTR = w!("dwmr-bar");
 const W_WALLPAPER_CLASS_NAME: PCWSTR = w!("Progman");
 const BAR_HEIGHT: i32 = 20;
 const TAGMASK: u32 = (1 << TAGS.len()) - 1;
-const DEFAULT_DPI : f32 = 96.0;
 
 #[derive(Default, Clone, Debug)]
 struct Rect {
@@ -545,8 +544,6 @@ impl LayoutTrait for StackLayout {
             (false, _) => monitor.client_area.height
         };
 
-        //let stack_height = monitor.client_area.height - master_height;
-
         let mut index = 0;
         for client in clients.iter_mut().rev() {
             if !Monitor::is_tiled(client, visible_tags) {
@@ -685,6 +682,7 @@ lazy_static! {
         "TaskListOverlayWnd".to_string(),
         "Shell_TrayWnd".to_string(),
         "TopLevelWindowForOverflowXamlIsland".to_string(),
+        "TaskManagerWindow".to_string(),
     ]);
 
 }
@@ -1339,7 +1337,6 @@ impl DwmrApp {
             if let Err(e) = GetLastError() {
                 println!("Error: failed to get class name - {e}");
             }
-            // class name should not be empty
             return Ok(false); 
         }
         let class_name = PCWSTR::from_raw(class_name_buf.as_ptr()).to_string().unwrap();
