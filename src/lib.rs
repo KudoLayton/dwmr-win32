@@ -823,7 +823,10 @@ impl DwmrApp {
         let client_name = PCWSTR::from_raw(client_name_buf.as_ptr()).to_string().unwrap();
 
         let mut class_name_buf = [0u16; 256];
-        GetClassNameW(hwnd, class_name_buf.as_mut());
+        if GetClassNameW(hwnd, class_name_buf.as_mut()) == 0 {
+            SetLastError(WIN32_ERROR(0));
+            return;
+        }
         let class_name = PCWSTR::from_raw(class_name_buf.as_ptr()).to_string().unwrap();
         SetLastError(WIN32_ERROR(0));
 
@@ -1304,7 +1307,11 @@ impl DwmrApp {
         let mut class_name_buf = [0u16; 256];
         SetLastError(WIN32_ERROR(0));
         if GetClassNameW(*hwnd, class_name_buf.as_mut()) == 0 {
-            GetLastError()?;
+            if let Err(e) = GetLastError() {
+                println!("Error: failed to get class name - {e}");
+            }
+            // class name should not be empty
+            return Ok(false); 
         }
         let class_name = PCWSTR::from_raw(class_name_buf.as_ptr()).to_string().unwrap();
         if DISALLOWED_CLASS.contains(&class_name) {
