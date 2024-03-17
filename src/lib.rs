@@ -347,18 +347,20 @@ impl Monitor {
         Ok(())
     }
 
+    pub fn find_client_index(&self, hwnd: &HWND) -> Option<usize> {
+        if hwnd.0 == 0 {
+            return None;
+        }
+        self.clients.iter().position(|client| client.hwnd == *hwnd)
+    }
+
     fn get_selected_client_index(&self) -> Option<usize> {
         let selected_hwnd = self.selected_hwnd;
         if selected_hwnd.0 == 0 {
             return None;
         }
 
-        for (index, client) in self.clients.iter().enumerate() {
-            if client.hwnd == selected_hwnd {
-                return Some(index);
-            }
-        }
-        None
+        return self.find_client_index(&selected_hwnd);
     }
 
     pub fn is_visible(client: &Client, visible_tags: u32) -> bool {
@@ -1243,8 +1245,9 @@ impl DwmrApp {
             return Ok(());
         }
 
-        let selected_client = selected_monitor.clients[selected_client_index.unwrap()].clone();
-        selected_monitor.clients.remove(selected_client_index.unwrap());
+        let selected_client_index = selected_client_index.unwrap();
+        let selected_client = selected_monitor.clients[selected_client_index].clone();
+        selected_monitor.clients.remove(selected_client_index);
         selected_monitor.clients.push(selected_client);
 
         Ok(())
@@ -1394,10 +1397,8 @@ impl DwmrApp {
 
     unsafe fn manage(&mut self, hwnd: &HWND) -> Result<Client> {
         for monitor in self.monitors.iter() {
-            for client in monitor.clients.iter() {
-                if client.hwnd == *hwnd {
-                    return Ok(client.clone());
-                }
+            if let Some(client_index) = monitor.find_client_index(hwnd) {
+                return Ok(monitor.clients[client_index].clone());
             }
         }
 
