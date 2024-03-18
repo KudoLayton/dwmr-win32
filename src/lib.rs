@@ -1175,11 +1175,16 @@ impl DwmrApp {
         self.monitors[client.monitor].clients.remove(found_index);
 
         let mut new_client = client;
+        let new_client_hwnd = new_client.hwnd;
         new_client.monitor = target_monitor_index;
         self.monitors[target_monitor_index].clients.push(new_client);
 
+        self.selected_monitor_index = Some(target_monitor_index);
+        self.monitors[target_monitor_index].selected_hwnd = new_client_hwnd;
+
         self.arrange()?;
         self.refresh_focus()?;
+        self.refresh_bar()?;
         Ok(())
     }
 
