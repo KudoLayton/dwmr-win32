@@ -385,6 +385,15 @@ impl Monitor {
         self.clients.retain(|client| IsWindow(client.hwnd) == TRUE);
         Ok(())
     }
+
+    pub fn is_in_monitor(&self, x: i32, y: i32) -> bool {
+        let left_check = self.rect.x <= x;
+        let right_check = x <= self.rect.x + self.rect.width;
+        let top_check = self.rect.y <= y;
+        let bottom_check = y <= self.rect.y + self.rect.height;
+
+        left_check && right_check && top_check && bottom_check
+    }
 }
 
 trait LayoutTrait {
@@ -892,6 +901,16 @@ impl DwmrApp {
 
         match event {
             EVENT_SYSTEM_FOREGROUND => {
+                if hwnd == self.wallpaper_hwnd {
+                    let mut cursor_pos = POINT::default();
+                    let _ = GetCursorPos(&mut cursor_pos);
+                    if let Some(index) = self.monitors.iter().position(|monitor| -> bool {monitor.is_in_monitor(cursor_pos.x, cursor_pos.y)}) {
+                        self.selected_monitor_index = Some(index);
+                        self.refresh_bar().unwrap();
+                    }
+                    return;
+                }
+
                 let is_new_clinet = !self.monitors.iter().any(|monitor| -> bool {monitor.clients.iter().any(|client| -> bool {client.hwnd == hwnd})});
                 if is_new_clinet {
                     if !Self::is_manageable(&hwnd).unwrap() {
@@ -1440,14 +1459,7 @@ impl DwmrApp {
 
         let mut monitor_index:usize = 0;
         for (index, monitor_iter) in self.monitors.iter().enumerate() {
-            let monitor_rect = &monitor_iter.rect;
-
-            let left_check = monitor_rect.x <= center_x;
-            let right_check = center_x <= monitor_rect.x + monitor_rect.width;
-            let top_check = monitor_rect.y <= center_y;
-            let bottom_check = center_y <= monitor_rect.y + monitor_rect.height;
-
-            if left_check && right_check && top_check && bottom_check {
+            if monitor_iter.is_in_monitor(center_x, center_y) {
                 monitor_index = index;
             }
         }
