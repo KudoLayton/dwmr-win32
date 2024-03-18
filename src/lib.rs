@@ -24,6 +24,7 @@ use windows::{
     }
 };
 
+use core::fmt;
 use std::{
     collections::*,
     mem::size_of,
@@ -495,7 +496,14 @@ impl LayoutTrait for TileLayout {
                 }
             };
             index += 1;
-            self.resize(&client.hwnd, &rect)?;
+            match self.resize(&client.hwnd, &rect) {
+                Ok(()) => (),
+                Err(e) => {
+                    println!("Error: {:?}", e);
+                    println!("Problem Client: {}", client.to_string());
+                    Err(e)?;
+                }
+            }
             client.rect = rect.clone();
 
             let next_y = (is_master as u32) * master_y + (!is_master as u32) * stack_y + rect.height as u32;
@@ -566,7 +574,14 @@ impl LayoutTrait for StackLayout {
             };
 
             index += 1;
-            self.resize(&client.hwnd, &rect)?;
+            match self.resize(&client.hwnd, &rect) {
+                Ok(()) => (),
+                Err(e) => {
+                    println!("Error: {:?}", e);
+                    println!("Problem Client: {}", client.to_string());
+                    Err(e)?;
+                }
+            }
             client.rect = rect.clone();
 
             stack_y += rect.height as u32;
@@ -616,6 +631,12 @@ pub struct Client {
     is_cloaked: bool,
     is_hide: bool,
     monitor: usize,
+}
+
+impl fmt::Display for Client {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "HWND: {} | Title: {} | Class: {} | Process Filename: {}", self.hwnd.0, self.title, self.class, self.process_filename)
+    }
 }
 
 pub struct Rule {
