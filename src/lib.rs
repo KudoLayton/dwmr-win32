@@ -381,9 +381,8 @@ impl Monitor {
         (!client.is_floating) && Self::is_visible(client, visible_tags)
     }
 
-    pub unsafe fn sanitize_clients(&mut self) -> Result<()> {
+    pub unsafe fn sanitize_clients(&mut self) {
         self.clients.retain(|client| IsWindow(client.hwnd) == TRUE);
-        Ok(())
     }
 
     pub fn is_in_monitor(&self, x: i32, y: i32) -> bool {
@@ -818,7 +817,7 @@ impl DwmrApp {
                 LRESULT::default()
             }
             WM_HOTKEY => {
-                self.sanitize_monitors().unwrap();
+                self.sanitize_monitors();
                 let tag_keys_sub_len = TAG_KEYS.first().unwrap().len();
                 let tag_keys_len = TAG_KEYS.len() * tag_keys_sub_len;
                 if wparam.0 < KEYS.len(){
@@ -897,7 +896,7 @@ impl DwmrApp {
             return;
         }
 
-        self.sanitize_monitors().unwrap();
+        self.sanitize_monitors();
 
         match event {
             EVENT_SYSTEM_FOREGROUND => {
@@ -958,12 +957,10 @@ impl DwmrApp {
         }
     }
 
-    unsafe fn sanitize_monitors(&mut self) -> Result<()>
-    {
+    unsafe fn sanitize_monitors(&mut self) {
         for monitor in self.monitors.iter_mut() {
-            monitor.sanitize_clients()?;
+            monitor.sanitize_clients();
         }
-        Ok(())
     }
 
     unsafe fn reallocate_window(&mut self, hwnd: &HWND) -> Result<()>
