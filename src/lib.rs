@@ -326,7 +326,15 @@ impl Monitor {
     unsafe fn arrangemon(&mut self) -> Result<()> {
         self.show_hide()?;
         let layout = self.layout.clone();
-        layout.unwrap().arrange_layout(self)?;
+        for _ in 0..5 {
+            match layout.unwrap().arrange_layout(self) {
+                Ok(()) => break,
+                Err(e) => {
+                    println!("Error: Arrange Fail - {e}");
+                    self.sanitize_clients();
+                }
+            }
+        }
         Ok(())
     }
 
