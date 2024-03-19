@@ -99,6 +99,7 @@ struct Bar {
     write_factory: Option<IDWriteFactory>,
     dpi: f32,
     selected_tags: u32,
+    window_tags: u32,
 }
 
 impl Bar {
@@ -236,10 +237,17 @@ impl Bar {
 
         let mut x_pos = 0.0;
         for i in 0..TAGS.len() {
+            let window_exist = has_flag!(self.window_tags, TAGMASK & (1 << i));
+            let is_selected_tag = has_flag!(self.selected_tags, 1 << i);
+            let window_mark = match (window_exist, is_selected_tag) {
+                (false, _) => None,
+                (true, true) => Some(BAR_SELECTED_WINDOW_MARK.as_wide()),
+                (true, false) => Some(BAR_UNSELECTED_WINDOW_MARK.as_wide()),
+            };
             x_pos = match (has_flag!(self.selected_tags, 1 << i), self.is_selected_monitor) {
-                (true, true ) => self.draw_selected_monitor_selected_text_box(TAGS[i].as_wide(), 15.0, x_pos)?,
-                (true, false) => self.draw_unselected_monitor_selected_text_box(TAGS[i].as_wide(), 15.0, x_pos)?,
-                (false, _   ) => self.draw_unselected_text_box(TAGS[i].as_wide(), 15.0, x_pos)?
+                (true, true ) => self.draw_selected_monitor_selected_text_box(TAGS[i].as_wide(), window_mark, 15.0, x_pos)?,
+                (true, false) => self.draw_unselected_monitor_selected_text_box(TAGS[i].as_wide(), window_mark, 15.0, x_pos)?,
+                (false, _   ) => self.draw_unselected_text_box(TAGS[i].as_wide(), window_mark, 15.0, x_pos)?
 
             };
             x_pos += 5.0;
@@ -250,15 +258,17 @@ impl Bar {
         Ok(())
     }
 
-    unsafe fn draw_unselected_text_box(&self, text: &[u16], font_size: f32, origin_x: f32) -> Result<f32> 
+    unsafe fn draw_unselected_text_box(&self, text: &[u16], super_text: Option<&[u16]>, font_size: f32, origin_x: f32) -> Result<f32> 
     {
         let next_width = implement_draw_text_box(
             text, 
+            super_text,
             font_size, 
             self.rect.width as f32, 
             self.rect.height as f32, 
             origin_x, 
             self.rect.y as f32,
+            BAR_PADDING, 
             self.dpi, 
             self.text_format.as_ref().unwrap(), 
             self.write_factory.as_ref().unwrap(), 
@@ -268,15 +278,17 @@ impl Bar {
         Ok(next_width)
     }
 
-    unsafe fn draw_selected_monitor_selected_text_box(&self, text: &[u16], font_size: f32, origin_x: f32) -> Result<f32> 
+    unsafe fn draw_selected_monitor_selected_text_box(&self, text: &[u16], super_text: Option<&[u16]>, font_size: f32, origin_x: f32) -> Result<f32> 
     {
         let next_width = implement_draw_text_box(
             text, 
+            super_text,
             font_size, 
             self.rect.width as f32, 
             self.rect.height as f32, 
             origin_x, 
             self.rect.y as f32,
+            BAR_PADDING, 
             self.dpi, 
             self.text_format.as_ref().unwrap(), 
             self.write_factory.as_ref().unwrap(), 
@@ -286,15 +298,17 @@ impl Bar {
         Ok(next_width)
     }
 
-    unsafe fn draw_unselected_monitor_selected_text_box(&self, text: &[u16], font_size: f32, origin_x: f32) -> Result<f32> 
+    unsafe fn draw_unselected_monitor_selected_text_box(&self, text: &[u16], super_text: Option<&[u16]>, font_size: f32, origin_x: f32) -> Result<f32> 
     {
         let next_width = implement_draw_text_box(
             text, 
+            super_text,
             font_size, 
             self.rect.width as f32, 
             self.rect.height as f32, 
             origin_x, 
             self.rect.y as f32,
+            BAR_PADDING, 
             self.dpi, 
             self.text_format.as_ref().unwrap(), 
             self.write_factory.as_ref().unwrap(), 
@@ -400,6 +414,14 @@ impl Monitor {
         let bottom_check = y <= self.rect.y + self.rect.height;
 
         left_check && right_check && top_check && bottom_check
+    }
+
+    pub unsafe fn update_bar(&mut self, is_selected_monitor: bool) {
+        let window_tags = self.clients.iter().fold(0u32, |acc, client| -> u32 { acc | client.tags });
+        self.bar.window_tags = window_tags;
+        self.bar.selected_tags = self.tagset[self.selected_tag_index];
+        self.bar.is_selected_monitor = is_selected_monitor;
+        let _result = RedrawWindow(self.bar.hwnd, None, None, RDW_INVALIDATE);
     }
 }
 
@@ -1070,7 +1092,7 @@ impl DwmrApp {
         self.set_focus(*hwnd);
 
         for monitor in self.monitors.iter_mut() {
-            let _result = RedrawWindow(monitor.bar.hwnd, None, None, RDW_INVALIDATE);
+            let _result = monitor.update_bar(monitor.bar.is_selected_monitor);
         }
         Ok(())
     }
@@ -1251,13 +1273,8 @@ impl DwmrApp {
     unsafe fn refresh_bar(&mut self) -> Result<()> {
         let selected_monitor_index = self.selected_monitor_index;
         for monitor in self.monitors.iter_mut() {
-            monitor.bar.selected_tags = monitor.tagset[monitor.selected_tag_index];
-            if selected_monitor_index.is_some() && monitor.index == selected_monitor_index.unwrap() {
-                monitor.bar.is_selected_monitor = true;
-            } else {
-                monitor.bar.is_selected_monitor = false;
-            }
-            let _result = RedrawWindow(monitor.bar.hwnd, None, None, RDW_INVALIDATE);
+            let is_selected_monitor = selected_monitor_index.is_some() && monitor.index == selected_monitor_index.unwrap();
+            monitor.update_bar(is_selected_monitor);
         }
         Ok(())
     }
@@ -1625,8 +1642,7 @@ impl DwmrApp {
         if (selected_tag & TAGMASK) != 0 {
             monitor.tagset[monitor.selected_tag_index] = selected_tag & TAGMASK;
         }
-        monitor.bar.selected_tags = monitor.tagset[monitor.selected_tag_index];
-        let _result = RedrawWindow(monitor.bar.hwnd, None, None, RDW_INVALIDATE);
+        monitor.update_bar(monitor.bar.is_selected_monitor);
         self.refresh_focus()?;
         self.arrange()?;
         Ok(())
@@ -1646,9 +1662,7 @@ impl DwmrApp {
         if new_tag_set == 0 {
             return Ok(());
         }
-        monitor.tagset[monitor.selected_tag_index] = new_tag_set;
-        monitor.bar.selected_tags = new_tag_set;
-        let _result = RedrawWindow(monitor.bar.hwnd, None, None, RDW_INVALIDATE);
+        monitor.update_bar(monitor.bar.is_selected_monitor);
         self.refresh_focus()?;
         self.arrange()?;
         Ok(())
@@ -1674,6 +1688,7 @@ impl DwmrApp {
         monitor.clients[selected_client_index.unwrap()].tags = selected_tag;
         self.refresh_focus()?;
         self.arrange()?;
+        self.refresh_bar()?;
         Ok(())
     }
 
@@ -1698,6 +1713,7 @@ impl DwmrApp {
         monitor.clients[selected_client_index.unwrap()].tags = new_tags;
         self.refresh_focus()?;
         self.arrange()?;
+        self.refresh_bar()?;
         Ok(())
     }
 

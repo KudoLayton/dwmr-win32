@@ -1,5 +1,4 @@
-use std::str::FromStr;
-
+use windows::core::*;
 use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
 use super::*;
 
@@ -25,6 +24,11 @@ pub const TAGS: [PCWSTR; 9] = [
     w!("8"),
     w!("9"),
 ];
+
+pub const BAR_PADDING: f32 = 5.0;
+pub const BAR_FONT: PCWSTR = w!("Arial");
+pub const BAR_UNSELECTED_WINDOW_MARK: PCWSTR = w!("□");
+pub const BAR_SELECTED_WINDOW_MARK: PCWSTR = w!("■");
 
 pub const EXCLUDE_DEBUGGED_WINDOW: bool = true;
 
