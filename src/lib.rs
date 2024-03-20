@@ -1699,6 +1699,8 @@ impl DwmrApp {
         if new_tag_set == 0 {
             return Ok(());
         }
+
+        monitor.tagset[monitor.selected_tag_index] = new_tag_set;
         monitor.update_bar(monitor.bar.is_selected_monitor);
         self.refresh_focus()?;
         self.arrange()?;
