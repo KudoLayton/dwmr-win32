@@ -1,3 +1,4 @@
+cargo build --release
 $logFolderPath = Join-Path -Path $PSScriptRoot -ChildPath "log"
 
 if (-not (Test-Path -Path $logFolderPath)) {
