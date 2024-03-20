@@ -1,13 +1,15 @@
 use windows::{
     core::*,
+    Foundation::Numerics::*,
     Win32::Graphics::{
         Direct2D::*,
         DirectWrite::*,
     }
-
 };
 
 use crate::BAR_FONT;
+
+const FHD_WIDTH: f32 = 1920.0;
 
 pub unsafe fn implement_draw_text_box(
     text: &[u16],
@@ -39,11 +41,18 @@ pub unsafe fn implement_draw_text_box(
     text_layout.GetMetrics(&mut text_metrics)?;
 
     let rect = Common::D2D_RECT_F {
-        left: origin_x, 
+        left: 0.0, 
         top: max_height, 
-        right: origin_x + &text_metrics.width + (pad * 2.0), 
+        right: 0.0 + &text_metrics.width + (pad * 2.0), 
         bottom: 0.0
     };
+
+    let affine_matrix =  Matrix3x2 {
+        M11: FHD_WIDTH / max_width, M12: 0.0,
+        M21: 0.0,                   M22: 1.0,
+        M31: origin_x,              M32: 0.0
+    };
+    render_target_ref.SetTransform(&affine_matrix);
 
     render_target_ref.FillRectangle(&rect, box_brush);
     render_target_ref.DrawTextLayout(
@@ -61,9 +70,9 @@ pub unsafe fn implement_draw_text_box(
             text_format, 
             max_width / dpi, 
             max_height / dpi)?;
-        super_text_layout.SetFontSize(font_size / 2.0, super_text_range.clone())?;
+        super_text_layout.SetFontSize(font_size * 0.8, super_text_range.clone())?;
         super_text_layout.SetFontFamilyName(BAR_FONT, super_text_range.clone())?;
-        super_text_layout.SetLocaleName(w!("ko_kr"), super_text_range.clone())?;
+        super_text_layout.SetLocaleName(w!("ko-kr"), super_text_range.clone())?;
         super_text_layout.GetMetrics(&mut super_text_metrics)?;
 
         render_target_ref.DrawTextLayout(
@@ -72,5 +81,5 @@ pub unsafe fn implement_draw_text_box(
             text_brush, 
             D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
-    Ok(rect.right)
+    Ok(origin_x + (rect.right) * FHD_WIDTH / max_width)
 }
