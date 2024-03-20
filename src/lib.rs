@@ -709,6 +709,7 @@ pub struct DwmrApp {
     monitors: Vec<Monitor>,
     selected_monitor_index: Option<usize>,
     event_hook: Vec<HWINEVENTHOOK>,
+    mouse_hook: Option<HHOOK>,
     bar: Bar,
 }
 
@@ -809,6 +810,7 @@ impl DwmrApp {
         self.event_hook.push(SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_DESTROY, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
         self.event_hook.push(SetWinEventHook(EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZEEND, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
         self.event_hook.push(SetWinEventHook(EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
+        self.mouse_hook = Some(SetWindowsHookExW(WH_MOUSE_LL, Some(Self::mouse_event_handler), None, 0)?);
 
         self.grab_keys()?;
 
@@ -985,6 +987,36 @@ impl DwmrApp {
             }
             _ => ()
         }
+    }
+
+    unsafe extern "system" fn mouse_event_handler(ncode: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if ncode < 0 || wparam.0 != WM_LBUTTONDOWN as usize {
+            return CallNextHookEx(None, ncode, wparam, lparam);
+        }
+
+        let self_hwnd = FindWindowW(W_APP_NAME, None);
+        if self_hwnd.0 == 0 {
+            return CallNextHookEx(None, ncode, wparam, lparam);
+        }
+
+        let this = GetWindowLongPtrW(self_hwnd, GWLP_USERDATA) as *mut Self;
+        if this.is_null() {
+            return CallNextHookEx(None, ncode, wparam, lparam);
+        }
+
+        let click_point = &(*(lparam.0 as *const MSLLHOOKSTRUCT)).pt;
+        (*this).monitor_click_handler(click_point).unwrap();
+        return CallNextHookEx(None, ncode, wparam, lparam);
+    }
+
+    unsafe fn monitor_click_handler(&mut self, mouse_point: &POINT) -> Result<()> {
+        let selected_monitor_index = self.monitors.iter().position(|monitor| -> bool {monitor.is_in_monitor(mouse_point.x, mouse_point.y)});
+        if selected_monitor_index.is_none() {
+            return Ok(());
+        }
+        self.selected_monitor_index = selected_monitor_index;
+        self.refresh_bar()?;
+        Ok(())
     }
 
     unsafe fn sanitize_monitors(&mut self) {
@@ -1600,6 +1632,11 @@ impl DwmrApp {
             for client in monitor.clients.iter() {
                 ShowWindow(client.hwnd, SW_RESTORE);
             }
+        }
+
+        if self.mouse_hook.is_some() {
+            let _ = UnhookWindowsHookEx(self.mouse_hook.unwrap());
+            self.mouse_hook = None;
         }
 
         if self.hwnd.0 == 0 {
