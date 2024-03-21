@@ -1111,6 +1111,7 @@ impl DwmrApp {
         self.monitors[found_monitor_index].clients.remove(found_client_index);
 
 
+        client.tags = self.monitors[contained_monitor_index].tagset[self.monitors[contained_monitor_index].selected_tag_index];
         let clients_count = self.monitors[contained_monitor_index].clients.len();
         let master_count = self.monitors[contained_monitor_index].master_count as usize;
         client.monitor = contained_monitor_index;
@@ -1254,6 +1255,7 @@ impl DwmrApp {
 
         let mut new_client = client;
         let new_client_hwnd = new_client.hwnd;
+        new_client.tags = self.monitors[target_monitor_index].tagset[self.monitors[target_monitor_index].selected_tag_index];
         new_client.monitor = target_monitor_index;
         self.monitors[target_monitor_index].clients.push(new_client);
 
