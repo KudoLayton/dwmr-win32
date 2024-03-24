@@ -42,9 +42,11 @@ pub const BAR_COLOR_UNSELECTED_TEXT :D2D1_COLOR_F   = D2D1_COLOR_F{ r: 155.0 / 2
 pub const BAR_COLOR_SELECTED_TEXT   :D2D1_COLOR_F   = D2D1_COLOR_F{ r: 217.0 / 255.0, g: 225.0 / 255.0, b: 232.0 / 255.0, a: 1.0 };
 
 lazy_static! {
-    pub static ref RULES: [Rule; 2] = [
+    pub static ref RULES: [Rule; 4] = [
         Rule{title: None,       class: None,        process_filename: Some("KakaoTalk".to_string()),         is_floating: true,      tags: 1 << 0},
+        Rule{title: Some("화면 속 화면".to_string()),       class: None,        process_filename: None,         is_floating: true,      tags: 1 << 0},
         Rule{title: None,       class: None,        process_filename: Some("steamapps".to_string()),         is_floating: true,      tags: 1 << 0},
+        Rule{title: None,       class: None,        process_filename: Some("mstsc".to_string()),         is_floating: true,      tags: 1 << 0},
     ];
 
     pub static ref TAG_KEYS: [[Key; 4]; 9] = [
