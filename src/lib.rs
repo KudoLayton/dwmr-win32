@@ -687,7 +687,7 @@ pub struct Rule {
 
 impl Rule {
     pub fn is_match(&self, client: &Client) -> bool {
-        if self.title.is_some() && self.title.as_ref().unwrap() != &client.title {
+        if self.title.is_some() && !client.title.contains(self.title.as_ref().unwrap()) {
             return false;
         }
 
@@ -1111,7 +1111,11 @@ impl DwmrApp {
         self.monitors[found_monitor_index].clients.remove(found_client_index);
 
 
-        client.tags = self.monitors[contained_monitor_index].tagset[self.monitors[contained_monitor_index].selected_tag_index];
+        //client.tags = self.monitors[contained_monitor_index].tagset[self.monitors[contained_monitor_index].selected_tag_index];
+        let prev_monitor_tag = self.monitors[contained_monitor_index].tagset[self.monitors[contained_monitor_index].selected_tag_index];
+        let monitor_selected_tag_index = self.monitors[contained_monitor_index].selected_tag_index;
+        self.monitors[contained_monitor_index].tagset[monitor_selected_tag_index] = prev_monitor_tag | client.tags;
+
         let clients_count = self.monitors[contained_monitor_index].clients.len();
         let master_count = self.monitors[contained_monitor_index].master_count as usize;
         client.monitor = contained_monitor_index;
@@ -1255,7 +1259,10 @@ impl DwmrApp {
 
         let mut new_client = client;
         let new_client_hwnd = new_client.hwnd;
-        new_client.tags = self.monitors[target_monitor_index].tagset[self.monitors[target_monitor_index].selected_tag_index];
+        //new_client.tags = self.monitors[target_monitor_index].tagset[self.monitors[target_monitor_index].selected_tag_index];
+        let prev_monitor_tag = self.monitors[target_monitor_index].tagset[self.monitors[target_monitor_index].selected_tag_index];
+        let monitor_selected_tag_index = self.monitors[target_monitor_index].selected_tag_index;
+        self.monitors[target_monitor_index].tagset[monitor_selected_tag_index] = prev_monitor_tag | new_client.tags;
         new_client.monitor = target_monitor_index;
         self.monitors[target_monitor_index].clients.push(new_client);
 
@@ -1594,6 +1601,8 @@ impl DwmrApp {
             }
         }
 
+        let prev_monitor_tags = self.monitors[monitor_index].tagset[monitor_tag_index];
+        self.monitors[monitor_index].tagset[monitor_tag_index] = client.tags | prev_monitor_tags;
         self.monitors[monitor_index].clients.push(client.clone());
 
         Ok(client)
