@@ -25,6 +25,8 @@ pub const TAGS: [PCWSTR; 9] = [
     w!("9"),
 ];
 
+pub const CURRENT_WINDOW_MARK: &str = "*";
+
 pub const BAR_PADDING: f32 = 10.0;
 pub const BAR_FONT: PCWSTR = w!("Arial");
 pub const BAR_UNSELECTED_WINDOW_MARK: PCWSTR = w!("□");

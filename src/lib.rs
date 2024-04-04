@@ -100,6 +100,7 @@ struct Bar {
     dpi: f32,
     selected_tags: u32,
     window_tags: u32,
+    current_window_tags: u32,
 }
 
 impl Bar {
@@ -244,10 +245,18 @@ impl Bar {
                 (true, true) => Some(BAR_SELECTED_WINDOW_MARK.as_wide()),
                 (true, false) => Some(BAR_UNSELECTED_WINDOW_MARK.as_wide()),
             };
+
+            let marked_tag = HSTRING::from(TAGS[i].to_string().unwrap() + CURRENT_WINDOW_MARK);
+            let display_tag = if has_flag!(self.current_window_tags, 1 << i) {
+                marked_tag.as_wide()
+            } else {
+                TAGS[i].as_wide()
+            };
+
             x_pos = match (has_flag!(self.selected_tags, 1 << i), self.is_selected_monitor) {
-                (true, true ) => self.draw_selected_monitor_selected_text_box(TAGS[i].as_wide(), window_mark, 15.0, x_pos)?,
-                (true, false) => self.draw_unselected_monitor_selected_text_box(TAGS[i].as_wide(), window_mark, 15.0, x_pos)?,
-                (false, _   ) => self.draw_unselected_text_box(TAGS[i].as_wide(), window_mark, 15.0, x_pos)?
+                (true, true ) => self.draw_selected_monitor_selected_text_box(display_tag, window_mark, 15.0, x_pos)?,
+                (true, false) => self.draw_unselected_monitor_selected_text_box(display_tag, window_mark, 15.0, x_pos)?,
+                (false, _   ) => self.draw_unselected_text_box(display_tag, window_mark, 15.0, x_pos)?
 
             };
             x_pos += 5.0;
@@ -421,6 +430,10 @@ impl Monitor {
         self.bar.window_tags = window_tags;
         self.bar.selected_tags = self.tagset[self.selected_tag_index];
         self.bar.is_selected_monitor = is_selected_monitor;
+        self.bar.current_window_tags = 0;
+        if let Some(client_index) = self.get_selected_client_index() {
+            self.bar.current_window_tags = self.clients[client_index].tags;
+        }
         let _result = RedrawWindow(self.bar.hwnd, None, None, RDW_INVALIDATE);
     }
 }
@@ -967,12 +980,14 @@ impl DwmrApp {
             }
             EVENT_OBJECT_CLOAKED | EVENT_OBJECT_DESTROY => {
                 self.unmanage(&hwnd).unwrap();
+                self.refresh_bar().unwrap();
             }
             EVENT_OBJECT_HIDE => {
                 if self.monitors.iter().any(|monitor| -> bool {monitor.clients.iter().any(|client| -> bool {client.hwnd == hwnd && client.is_hide})}) {
                     return;
                 }
                 self.unmanage(&hwnd).unwrap();
+                self.refresh_bar().unwrap();
             }
             EVENT_SYSTEM_MOVESIZEEND => {
                 let is_new_clinet = !self.monitors.iter().any(|monitor| -> bool {monitor.clients.iter().any(|client| -> bool {client.hwnd == hwnd})});
@@ -984,6 +999,7 @@ impl DwmrApp {
                     self.monitors[client.monitor].arrangemon().unwrap();
                 }
                 self.reallocate_window(&hwnd).unwrap();
+                self.refresh_bar().unwrap();
             }
             _ => ()
         }
