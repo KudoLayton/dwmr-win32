@@ -25,6 +25,7 @@ pub const TAGS: [PCWSTR; 9] = [
     w!("9"),
 ];
 
+pub const DEFAULT_TAGS: u32 = 1 << 0;
 pub const CURRENT_WINDOW_MARK: &str = "*";
 
 pub const BAR_PADDING: f32 = 10.0;

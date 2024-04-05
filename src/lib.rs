@@ -1597,7 +1597,6 @@ impl DwmrApp {
 
         let process_filename = get_processname().unwrap_or_default();
         let monitor_tag_index = self.monitors[monitor_index].selected_tag_index;
-        let monitor_tag = self.monitors[monitor_index].tagset[monitor_tag_index];
 
         let mut client = Client {
             hwnd: *hwnd,
@@ -1611,7 +1610,7 @@ impl DwmrApp {
             is_minimized,
             is_cloaked,
             monitor: monitor_index,
-            tags: monitor_tag,
+            tags: DEFAULT_TAGS,
             ..Default::default()
         };
 
