@@ -362,8 +362,10 @@ impl Monitor {
     }
 
     unsafe fn show_hide(&mut self) -> Result<()> {
+        let mut is_all_hide = true;
         for client in self.clients.iter_mut() {
             let is_visible = Self::is_visible(client, self.tagset[self.selected_tag_index]);
+            is_all_hide &= !is_visible;
             let is_window_visible = IsWindowVisible(client.hwnd) == TRUE;
             if is_visible && !is_window_visible {
                 client.is_hide = false;
@@ -374,6 +376,10 @@ impl Monitor {
                 client.is_hide = true;
                 ShowWindow(client.hwnd, SW_HIDE);
             }
+        }
+
+        if is_all_hide {
+            self.selected_hwnd = HWND(0);
         }
         Ok(())
     }
@@ -1709,6 +1715,7 @@ impl DwmrApp {
         monitor.update_bar(monitor.bar.is_selected_monitor);
         self.refresh_focus()?;
         self.arrange()?;
+        self.refresh_bar()?;
         Ok(())
     }
 
@@ -1731,6 +1738,7 @@ impl DwmrApp {
         monitor.update_bar(monitor.bar.is_selected_monitor);
         self.refresh_focus()?;
         self.arrange()?;
+        self.refresh_bar()?;
         Ok(())
     }
 
