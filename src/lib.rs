@@ -1319,7 +1319,12 @@ impl DwmrApp {
         }
 
         let index_offset = arg.as_ref().unwrap().i;
-        let new_index = (((self.selected_monitor_index.unwrap() as i32) + index_offset) % self.monitors.len() as i32) as usize;
+
+        let original_index = self.selected_monitor_index.unwrap() as i32;
+        let monitors_len = self.monitors.len() as i32;
+        let mut applied_index = (original_index + index_offset) % monitors_len;
+        applied_index += monitors_len * (applied_index < 0) as i32;
+        let new_index = applied_index as usize;
 
         let selected_monitor = &self.monitors[self.selected_monitor_index.unwrap()];
         let selected_client_index = selected_monitor.get_selected_client_index();
