@@ -41,7 +41,6 @@ use graphic_utils::*;
 #[cfg(test)]
 mod test;
 
-// a macro to check bit flags for u32
 macro_rules! has_flag {
     ($flags:expr, $flag:expr) => {
         $flags & $flag == $flag
@@ -57,9 +56,10 @@ const W_BAR_NAME: PCWSTR = w!("dwmr-bar");
 const W_WALLPAPER_CLASS_NAME: PCWSTR = w!("Progman");
 const BAR_HEIGHT: i32 = 20;
 const TAGMASK: u32 = (1 << TAGS.len()) - 1;
+const WM_UPDATE_DISPLAY: u32 = WM_USER + 1;
 
 #[derive(Default, Clone, Debug)]
-struct Rect {
+pub struct Rect {
     x: i32,
     y: i32,
     width: i32,
@@ -85,9 +85,10 @@ impl PartialEq for Rect {
 
 impl Eq for Rect {}
 
-#[derive(Default, Debug)]
-struct Bar {
+#[derive(Default, Debug, Clone)]
+pub struct Bar {
     hwnd: HWND,
+    master_hwnd: HWND,
     rect: Rect,
     is_selected_monitor: bool,
     render_target: Option<ID2D1HwndRenderTarget>,
@@ -101,6 +102,16 @@ struct Bar {
     selected_tags: u32,
     window_tags: u32,
     current_window_tags: u32,
+}
+
+impl Drop for Bar {
+    fn drop(&mut self) {
+        unsafe {
+            if self.hwnd.0 != 0 {
+                let _ = DestroyWindow(self.hwnd);
+            }
+        }
+    }
 }
 
 impl Bar {
@@ -203,7 +214,20 @@ impl Bar {
                 LRESULT::default()
             }
             WM_DESTROY => {
-                PostQuitMessage(0);
+                LRESULT::default()
+            }
+            WM_DISPLAYCHANGE => {
+                println!("Display change detected");
+                let this = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Bar;
+                if this.is_null() {
+                    return LRESULT::default();
+                }
+
+                if (*this).hwnd != hwnd {
+                    return LRESULT::default();
+                }
+
+                SendMessageW((*this).master_hwnd, WM_UPDATE_DISPLAY, WPARAM::default(), LPARAM::default());
                 LRESULT::default()
             }
             WM_PAINT => {
@@ -212,9 +236,13 @@ impl Bar {
                     return LRESULT::default();
                 }
 
+                if (*this).hwnd != hwnd {
+                    return LRESULT::default();
+                }
+
                 let mut ps = PAINTSTRUCT::default();
                 let _hdc = BeginPaint(hwnd, &mut ps);
-                    (*this).draw().unwrap();
+                    let _ = (*this).draw();
                 EndPaint(hwnd, &ps);
                 LRESULT::default()
             }
@@ -729,7 +757,6 @@ pub struct DwmrApp {
     selected_monitor_index: Option<usize>,
     event_hook: Vec<HWINEVENTHOOK>,
     mouse_hook: Option<HHOOK>,
-    bar: Bar,
 }
 
 lazy_static! {
@@ -881,6 +908,14 @@ impl DwmrApp {
                     let key = &TAG_KEYS[tag_key_first_index][tag_key_second_index];
                     (key.func)(self, &key.arg).unwrap();
                 }
+                LRESULT::default()
+            }
+            WM_UPDATE_DISPLAY => {
+                println!("refresh display");
+                self.request_update_geom().unwrap();
+                self.scan().unwrap();
+                self.arrange().unwrap();
+                self.refresh_bar().unwrap();
                 LRESULT::default()
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -1182,6 +1217,14 @@ impl DwmrApp {
     }
 
     unsafe fn request_update_geom(&mut self) -> Result<()> {
+        for monitor in self.monitors.iter() {
+            for client in monitor.clients.iter() {
+                ShowWindow(client.hwnd, SW_RESTORE);
+            }
+        }
+
+        self.monitors.clear();
+
         let monitors = GetSystemMetrics(SM_CMONITORS) as usize;
         self.monitors.reserve(monitors);
 
@@ -1245,6 +1288,7 @@ impl DwmrApp {
 
         let display_rect = monitor.rect.clone();
         (*this).monitors.push(monitor);
+        (*this).monitors.last_mut().as_mut().unwrap().bar.master_hwnd = (*this).hwnd;
         (*this).monitors.last_mut().as_mut().unwrap().bar.setup_bar(&display_rect).unwrap();
         TRUE
     }
@@ -1992,6 +2036,11 @@ impl DwmrApp {
         selected_client.is_floating = !selected_client.is_floating;
         self.arrange()?;
         self.refresh_focus()?;
+        Ok(())
+    }
+
+    pub unsafe fn force_reset (&mut self, _arg: &Option<Arg>) -> Result<()> {
+        SendMessageW(self.hwnd, WM_UPDATE_DISPLAY, WPARAM::default(), LPARAM::default());
         Ok(())
     }
 }
