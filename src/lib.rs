@@ -912,8 +912,10 @@ impl DwmrApp {
             }
             WM_UPDATE_DISPLAY => {
                 println!("refresh display");
+                let clients_tags = self.export_clients_tags();
                 self.request_update_geom().unwrap();
                 self.scan().unwrap();
+                self.import_clients_tags(clients_tags);
                 self.arrange().unwrap();
                 self.refresh_bar().unwrap();
                 LRESULT::default()
@@ -2042,6 +2044,26 @@ impl DwmrApp {
     pub unsafe fn force_reset (&mut self, _arg: &Option<Arg>) -> Result<()> {
         SendMessageW(self.hwnd, WM_UPDATE_DISPLAY, WPARAM::default(), LPARAM::default());
         Ok(())
+    }
+
+    pub fn export_clients_tags(&self) -> HashMap<isize, u32> {
+        let mut clients_tags = HashMap::new();
+        for monitor in self.monitors.iter() {
+            for client in monitor.clients.iter() {
+                clients_tags.insert(client.hwnd.0, client.tags);
+            }
+        }
+        return clients_tags;
+    }
+
+    pub fn import_clients_tags(&mut self, clients_tags: HashMap<isize, u32>) {
+        for monitor in self.monitors.iter_mut() {
+            for client in monitor.clients.iter_mut() {
+                if let Some(tags) = clients_tags.get(&client.hwnd.0) {
+                    client.tags = *tags;
+                }
+            }
+        }
     }
 }
 
