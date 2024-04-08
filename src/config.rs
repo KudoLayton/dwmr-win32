@@ -9,6 +9,7 @@ macro_rules! tag_keys {
             Key{mod_key:MOD_KEY|MOD_CONTROL,            key:$key,       func:DwmrApp::toggle_view,      arg:Some(Arg{ui: 1 << $tag})},
             Key{mod_key:MOD_KEY|MOD_SHIFT,              key:$key,       func:DwmrApp::tag,              arg:Some(Arg{ui: 1 << $tag})},
             Key{mod_key:MOD_KEY|MOD_CONTROL|MOD_SHIFT,  key:$key,       func:DwmrApp::toggle_tag,       arg:Some(Arg{ui: 1 << $tag})},
+            Key{mod_key:MOD_CONTROL,                    key:$key,       func:DwmrApp::tag_all,          arg:Some(Arg{ui: 1 << $tag})},
         ]
     };
 }
@@ -52,7 +53,7 @@ lazy_static! {
         Rule{title: None,       class: None,        process_filename: Some("mstsc".to_string()),         is_floating: true,      tags: 1 << 0},
     ];
 
-    pub static ref TAG_KEYS: [[Key; 4]; 9] = [
+    pub static ref TAG_KEYS: [[Key; 5]; 9] = [
         tag_keys!('1', 0),
         tag_keys!('2', 1),
         tag_keys!('3', 2),

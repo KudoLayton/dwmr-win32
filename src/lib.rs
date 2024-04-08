@@ -1841,6 +1841,33 @@ impl DwmrApp {
         Ok(())
     }
 
+    pub unsafe fn tag_all (&mut self, arg: &Option<Arg>) -> Result<()> {
+        if arg.is_none() {
+            return Ok(());
+        }
+
+        let selected_tag = arg.as_ref().unwrap().ui & TAGMASK;
+        if selected_tag == 0 {
+            return Ok(());
+        }
+
+        let monitor_index = self.selected_monitor_index.unwrap();
+        let monitor = &mut self.monitors[monitor_index];
+        let monitor_visible_tag = monitor.tagset[monitor.selected_tag_index];
+
+        for client in monitor.clients.iter_mut() {
+            if Monitor::is_visible(client, monitor_visible_tag) {
+                client.tags = selected_tag;
+            }
+        }
+
+        self.refresh_focus()?;
+        self.arrange()?;
+        self.refresh_bar()?;
+        Ok(())
+    }
+
+
     pub unsafe fn quit(&mut self, _: &Option<Arg>) -> Result<()> {
         if self.hwnd.0 == 0 {
             return Ok(());
