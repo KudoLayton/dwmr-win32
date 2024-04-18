@@ -65,11 +65,12 @@ lazy_static! {
         tag_keys!('9', 8),
     ];
 
-    pub static ref KEYS: [Key; 14] = [
+    pub static ref KEYS: [Key; 15] = [
         Key{mod_key:MOD_KEY,                    key:'Q',     func:DwmrApp::quit,                    arg:None},
         Key{mod_key:MOD_KEY,                    key:'R',     func:DwmrApp::force_reset,             arg:None},
         Key{mod_key:MOD_KEY,                    key:'Z',     func:DwmrApp::zoom,                    arg:None},
         Key{mod_key:MOD_KEY,                    key:'F',     func:DwmrApp::toggle_float,            arg:None},
+        Key{mod_key:MOD_KEY,                    key:'U',     func:DwmrApp::all_unminimize,          arg:None},
         Key{mod_key:MOD_KEY,                    key:'J',     func:DwmrApp::focus_stack,             arg:Some(Arg{i:  1})},
         Key{mod_key:MOD_KEY,                    key:'K',     func:DwmrApp::focus_stack,             arg:Some(Arg{i: -1})},
         Key{mod_key:MOD_KEY,                    key:'T',     func:DwmrApp::set_layout,              arg:Some(Arg{l:  Layout::Tile(Default::default())})},

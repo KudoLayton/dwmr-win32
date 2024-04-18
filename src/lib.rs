@@ -443,7 +443,7 @@ impl Monitor {
     }
 
     unsafe fn is_tiled(client: &Client, visible_tags: u32) -> bool {
-        (!client.is_floating) && Self::is_visible(client, visible_tags)
+        (!client.is_floating) && Self::is_visible(client, visible_tags) && (!client.is_minimized)
     }
 
     pub unsafe fn sanitize_clients(&mut self) {
@@ -856,6 +856,7 @@ impl DwmrApp {
         self.event_hook.push(SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_DESTROY, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
         self.event_hook.push(SetWinEventHook(EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZEEND, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
         self.event_hook.push(SetWinEventHook(EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
+        self.event_hook.push(SetWinEventHook(EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND, None, Some(Self::window_event_hook_proc), 0, 0, WINEVENT_OUTOFCONTEXT));
         self.mouse_hook = Some(SetWindowsHookExW(WH_MOUSE_LL, Some(Self::mouse_event_handler), None, 0)?);
 
         self.grab_keys()?;
@@ -1042,6 +1043,14 @@ impl DwmrApp {
                     self.monitors[client.monitor].arrangemon().unwrap();
                 }
                 self.reallocate_window(&hwnd).unwrap();
+                self.refresh_bar().unwrap();
+            }
+            EVENT_SYSTEM_MINIMIZESTART => {
+                self.minimize(&hwnd).unwrap();
+                self.refresh_bar().unwrap();
+            }
+            EVENT_SYSTEM_MINIMIZEEND => {
+                self.unminimize(&hwnd).unwrap();
                 self.refresh_bar().unwrap();
             }
             _ => ()
@@ -1931,7 +1940,7 @@ impl DwmrApp {
             new_focus_index %= clients_count;
             new_focus_index += clients_count * (new_focus_index < 0) as i32;
 
-            while !Monitor::is_visible(&selected_monitor.clients[new_focus_index as usize], selected_tag) {
+            while (!Monitor::is_visible(&selected_monitor.clients[new_focus_index as usize], selected_tag)) || selected_monitor.clients[new_focus_index as usize].is_minimized {
                 new_focus_index += step;
                 new_focus_index %= clients_count as i32;
                 new_focus_index += clients_count * (new_focus_index < 0) as i32;
@@ -2091,6 +2100,52 @@ impl DwmrApp {
                 }
             }
         }
+    }
+
+    pub unsafe fn minimize(&mut self, hwnd: &HWND) -> Result<()> {
+        for monitor in self.monitors.iter_mut() {
+            for client in monitor.clients.iter_mut() {
+                if client.hwnd == *hwnd {
+                    client.is_minimized = true;
+                    monitor.arrangemon()?;
+                    return Ok(());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub unsafe fn unminimize(&mut self, hwnd: &HWND) -> Result<()> {
+        for monitor in self.monitors.iter_mut() {
+            for client in monitor.clients.iter_mut() {
+                if client.hwnd == *hwnd {
+                    client.is_minimized = false;
+                    monitor.arrangemon()?;
+                    return Ok(());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub unsafe fn all_unminimize(&mut self, _arg: &Option<Arg>) -> Result<()> {
+        if self.selected_monitor_index.is_none() {
+            return Ok(());
+        }
+
+        let monitor = &mut self.monitors[self.selected_monitor_index.unwrap()];
+        let selected_tag_index = monitor.selected_tag_index;
+        for client in monitor.clients.iter_mut() {
+            if Monitor::is_visible(client, monitor.tagset[selected_tag_index])
+            {
+                client.is_minimized = false;
+            }
+        }
+
+        monitor.arrangemon()?;
+        Ok(())
     }
 }
 
