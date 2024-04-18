@@ -1767,6 +1767,9 @@ impl DwmrApp {
             return Ok(());
         }
 
+        self.all_unminimize(arg)?;
+
+        let monitor = &mut self.monitors[monitor_index];
         monitor.selected_tag_index ^= 1;
         if (selected_tag & TAGMASK) != 0 {
             monitor.tagset[monitor.selected_tag_index] = selected_tag & TAGMASK;
@@ -1793,6 +1796,9 @@ impl DwmrApp {
             return Ok(());
         }
 
+        self.all_unminimize(arg)?;
+
+        let monitor = &mut self.monitors[monitor_index];
         monitor.tagset[monitor.selected_tag_index] = new_tag_set;
         monitor.update_bar(monitor.bar.is_selected_monitor);
         self.refresh_focus()?;
@@ -1843,6 +1849,7 @@ impl DwmrApp {
             return Ok(());
         }
 
+        let monitor = &mut self.monitors[monitor_index];
         monitor.clients[selected_client_index.unwrap()].tags = new_tags;
         self.refresh_focus()?;
         self.arrange()?;
