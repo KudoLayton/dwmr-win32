@@ -912,13 +912,22 @@ impl DwmrApp {
                 LRESULT::default()
             }
             WM_UPDATE_DISPLAY => {
-                println!("refresh display");
+                println!("start refresh display");
                 let clients_tags = self.export_clients_tags();
                 self.request_update_geom().unwrap();
+                println!("update geom");
+                for monitor in self.monitors.iter() {
+                    println!("recognized: {} x {}", monitor.rect.width, monitor.rect.height);
+                }
                 self.scan().unwrap();
+                println!("scan");
                 self.import_clients_tags(clients_tags);
+                println!("import clients tags");
                 self.arrange().unwrap();
+                println!("arrange");
                 self.refresh_bar().unwrap();
+                println!("refresh bar");
+                println!("end refresh display");
                 LRESULT::default()
             }
             _ => DefWindowProcW(hwnd, msg, wparam, lparam)
