@@ -757,6 +757,7 @@ pub struct DwmrApp {
     selected_monitor_index: Option<usize>,
     event_hook: Vec<HWINEVENTHOOK>,
     mouse_hook: Option<HHOOK>,
+    client_tag_cache: VecDeque<HashMap<isize, u32>>
 }
 
 lazy_static! {
@@ -913,9 +914,19 @@ impl DwmrApp {
             }
             WM_UPDATE_DISPLAY => {
                 println!("start refresh display");
-                let clients_tags = self.export_clients_tags();
+                
+                let clients_tags = if self.client_tag_cache.is_empty() {
+                    self.export_clients_tags()
+                } else {
+                    self.client_tag_cache.pop_back().unwrap()
+                };
                 self.request_update_geom().unwrap();
                 println!("update geom - {}", self.monitors.len());
+                if self.monitors.len() <= 0 {
+                    println!("No monitors! abort refresh");
+                    self.client_tag_cache.push_back(clients_tags);
+                    return LRESULT::default();
+                }
                 for monitor in self.monitors.iter() {
                     println!("recognized: {} x {}", monitor.rect.width, monitor.rect.height);
                 }
