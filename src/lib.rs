@@ -915,7 +915,7 @@ impl DwmrApp {
                 println!("start refresh display");
                 let clients_tags = self.export_clients_tags();
                 self.request_update_geom().unwrap();
-                println!("update geom");
+                println!("update geom - {}", self.monitors.len());
                 for monitor in self.monitors.iter() {
                     println!("recognized: {} x {}", monitor.rect.width, monitor.rect.height);
                 }
